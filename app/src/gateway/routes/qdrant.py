@@ -34,6 +34,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.auth.deps import get_db_session
 from gateway.config import Settings, get_settings
+from gateway.credential_store import (
+    CredentialMissing,
+    CredentialStore,
+    SETTING_QDRANT_KEY,
+    SETTING_QDRANT_URL,
+)
 from gateway.db.models import User
 from gateway.limits import enforce_monthly_cap
 from gateway.logging_mw import insert_request_log
@@ -117,7 +123,8 @@ async def _proxy(
     request: Request,
     user: User,
     session: AsyncSession,
-    settings: Settings,
+    qdrant_api_key: str,
+    max_body_bytes: int,
     method: str,
     url: str,
     upstream_body: dict[str, Any],
@@ -159,7 +166,7 @@ async def _proxy(
                 method,
                 url,
                 json=upstream_body,
-                headers=auth_headers(settings),
+                headers=auth_headers(qdrant_api_key),
             )
         except httpx.HTTPError as exc:
             state["error_code"] = type(exc).__name__
@@ -198,7 +205,7 @@ async def _proxy(
         )
     finally:
         latency_ms = int((time.monotonic() - started) * 1000)
-        max_bytes = settings.max_body_bytes
+        max_bytes = max_body_bytes
 
         request_body_text, request_bytes = truncate(
             json.dumps(upstream_body), max_bytes
@@ -264,6 +271,16 @@ async def qdrant_search(
     # matched — the URL is then safe to interpolate.
     validate_collection(body.collection)
 
+    cred_store: CredentialStore = request.app.state.credential_store
+    try:
+        qdrant_key = await cred_store.resolve(SETTING_QDRANT_KEY, session)
+        q_url = await cred_store.resolve(SETTING_QDRANT_URL, session)
+    except CredentialMissing as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "service_not_configured", "key": str(exc)},
+        )
+
     # Build the upstream body exclude-None style. Qdrant rejects unknown
     # fields strictly, and a nullable ``filter`` would be sent as
     # ``"filter": null`` which Qdrant interprets as "filter present but
@@ -282,9 +299,10 @@ async def qdrant_search(
         request=request,
         user=user,
         session=session,
-        settings=settings,
+        qdrant_api_key=qdrant_key,
+        max_body_bytes=settings.max_body_bytes,
         method="POST",
-        url=search_url(settings, body.collection),
+        url=search_url(q_url, body.collection),
         upstream_body=upstream_body,
         endpoint_name="qdrant.search",
         meta={"collection": body.collection, "limit": body.limit},
@@ -307,15 +325,26 @@ async def qdrant_upsert(
     """
     validate_collection(body.collection)
 
+    cred_store: CredentialStore = request.app.state.credential_store
+    try:
+        qdrant_key = await cred_store.resolve(SETTING_QDRANT_KEY, session)
+        q_url = await cred_store.resolve(SETTING_QDRANT_URL, session)
+    except CredentialMissing as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "service_not_configured", "key": str(exc)},
+        )
+
     upstream_body: dict[str, Any] = {"points": body.points}
 
     return await _proxy(
         request=request,
         user=user,
         session=session,
-        settings=settings,
+        qdrant_api_key=qdrant_key,
+        max_body_bytes=settings.max_body_bytes,
         method="PUT",
-        url=upsert_url(settings, body.collection, wait=body.wait),
+        url=upsert_url(q_url, body.collection, wait=body.wait),
         upstream_body=upstream_body,
         endpoint_name="qdrant.upsert",
         meta={

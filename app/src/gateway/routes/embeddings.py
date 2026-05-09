@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gateway.auth.deps import get_db_session
 from gateway.billing import compute_embedding_cost_usd
 from gateway.config import Settings, get_settings
+from gateway.credential_store import CredentialMissing, CredentialStore, SETTING_OPENROUTER_KEY
 from gateway.db.models import User
 from gateway.limits import enforce_monthly_cap
 from gateway.logging_mw import insert_request_log
@@ -124,6 +125,15 @@ async def embeddings(
 
     client: httpx.AsyncClient = request.app.state.openrouter_client
 
+    cred_store: CredentialStore = request.app.state.credential_store
+    try:
+        or_api_key = await cred_store.resolve(SETTING_OPENROUTER_KEY, session)
+    except CredentialMissing:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "service_not_configured", "key": "openrouter_api_key"},
+        )
+
     state: dict[str, Any] = {
         "status_code": 0,
         "error_code": None,
@@ -139,7 +149,8 @@ async def embeddings(
         try:
             resp, parsed = await call_embeddings(
                 client,
-                settings=settings,
+                api_key=or_api_key,
+                base_url=settings.openrouter_base_url,
                 model=body.model,
                 inputs=body.input,
             )

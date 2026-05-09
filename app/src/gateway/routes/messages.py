@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gateway.auth.deps import get_db_session
 from gateway.billing import compute_cost_usd, is_model_allowed
 from gateway.config import Settings, get_settings
+from gateway.credential_store import CredentialMissing, CredentialStore, SETTING_OPENROUTER_KEY
 from gateway.db.models import User
 from gateway.limits import enforce_monthly_cap
 from gateway.logging_mw import insert_request_log
@@ -140,6 +141,15 @@ async def messages(
     client: httpx.AsyncClient = request.app.state.openrouter_client
     url = f"{settings.openrouter_base_url}/messages"
 
+    cred_store: CredentialStore = request.app.state.credential_store
+    try:
+        or_api_key = await cred_store.resolve(SETTING_OPENROUTER_KEY, session)
+    except CredentialMissing:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "service_not_configured", "key": "openrouter_api_key"},
+        )
+
     # Mutable per-request state shared with the generator's ``finally``.
     # ``nonlocal`` keeps everything in one async closure — no instance
     # class needed.
@@ -166,7 +176,7 @@ async def messages(
                 "POST",
                 url,
                 json=upstream_body,
-                headers=auth_headers(settings),
+                headers=auth_headers(or_api_key),
             ) as resp:
                 state["upstream_status"] = resp.status_code
 
@@ -379,6 +389,15 @@ async def _messages_unary(
     client: httpx.AsyncClient = request.app.state.openrouter_client
     url = f"{settings.openrouter_base_url}/messages"
 
+    cred_store: CredentialStore = request.app.state.credential_store
+    try:
+        or_api_key = await cred_store.resolve(SETTING_OPENROUTER_KEY, session)
+    except CredentialMissing:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "service_not_configured", "key": "openrouter_api_key"},
+        )
+
     tokens_in = 0
     tokens_out = 0
     error_code: str | None = None
@@ -387,7 +406,7 @@ async def _messages_unary(
     response_bytes_total = 0
 
     try:
-        resp = await client.post(url, json=upstream_body, headers=auth_headers(settings))
+        resp = await client.post(url, json=upstream_body, headers=auth_headers(or_api_key))
         upstream_status = resp.status_code
         response_bytes_total = len(resp.content)
         response_text, _ = truncate(resp.text, settings.max_body_bytes)

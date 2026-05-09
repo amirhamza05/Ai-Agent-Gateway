@@ -62,6 +62,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.redis = redis_client
 
+    # ---- Credential store ----------------------------------------------
+    # 30-second TTL cache for gateway_settings (OpenRouter key, Qdrant
+    # URL/key). Resolution order: DB row → env var → CredentialMissing.
+    # Invalidated by the dashboard settings POST handler.
+    from gateway.credential_store import CredentialStore
+    credential_store = CredentialStore(settings, ttl_seconds=30.0)
+    app.state.credential_store = credential_store
+
     # ---- Pricing cache -------------------------------------------------
     # 30-second in-process TTL snapshot of model_pricing. Shared across
     # all requests on this worker. Invalidated by dashboard mutation routes.
