@@ -32,7 +32,7 @@ from uuid import uuid4
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,10 +120,7 @@ async def messages(
             detail={"error": "model_not_allowed", "model": body.model},
         )
     if body.stream is False:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": "streaming_required"},
-        )
+        return await _messages_unary(body, request, user, session, settings, prices)
 
     request_id = uuid4()
     chat_id = request.headers.get("X-Chat-Id") or None
@@ -349,4 +346,112 @@ async def messages(
         gen(),
         media_type="text/event-stream",
         headers=headers,
+    )
+
+
+async def _messages_unary(
+    body: MessagesRequest,
+    request: Request,
+    user: User,
+    session: AsyncSession,
+    settings: Settings,
+    prices: dict,
+) -> Response:
+    """Non-streaming passthrough for callers that send ``stream: false``.
+
+    The add-in's step labeler (``GetClaudeMessageAsync``) uses this path.
+    We forward with ``stream: False``, get a JSON body back, log it, and
+    return a plain JSON ``Response`` so the SDK's JSON deserialiser works.
+    """
+    request_id = uuid4()
+    chat_id = request.headers.get("X-Chat-Id") or None
+    started = time.monotonic()
+    log = logger.bind(
+        request_id=str(request_id),
+        user_id=str(user.id),
+        endpoint="messages",
+        model=body.model,
+    )
+
+    upstream_body: dict[str, Any] = body.model_dump(exclude_none=True)
+    upstream_body["stream"] = False
+
+    client: httpx.AsyncClient = request.app.state.openrouter_client
+    url = f"{settings.openrouter_base_url}/messages"
+
+    tokens_in = 0
+    tokens_out = 0
+    error_code: str | None = None
+    upstream_status = 0
+    response_text = ""
+    response_bytes_total = 0
+
+    try:
+        resp = await client.post(url, json=upstream_body, headers=auth_headers(settings))
+        upstream_status = resp.status_code
+        response_bytes_total = len(resp.content)
+        response_text, _ = truncate(resp.text, settings.max_body_bytes)
+
+        if resp.is_success:
+            try:
+                usage = resp.json().get("usage", {})
+                tokens_in = usage.get("input_tokens", 0) or 0
+                tokens_out = usage.get("output_tokens", 0) or 0
+            except Exception:
+                pass
+        else:
+            error_code = f"upstream_{resp.status_code}"
+
+    except httpx.HTTPError as exc:
+        error_code = type(exc).__name__
+        upstream_status = 502
+        log.warning("messages.unary.upstream_error", error_type=type(exc).__name__)
+        raise HTTPException(status_code=502, detail={"error": error_code}) from exc
+
+    finally:
+        latency_ms = int((time.monotonic() - started) * 1000)
+        _, req_bytes = truncate(json.dumps(upstream_body), settings.max_body_bytes)
+        cost = compute_cost_usd(body.model, tokens_in, tokens_out, prices=prices)
+        try:
+            await insert_request_log(
+                session,
+                request_id=request_id,
+                user_id=user.id,
+                endpoint="messages",
+                model=body.model,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_usd=cost,
+                status_code=upstream_status or None,
+                error_code=error_code,
+                latency_ms=latency_ms,
+                client_version=request.headers.get("X-Client-Version"),
+                client_ip=request.client.host if request.client else None,
+                request_body=upstream_body,
+                response_body=response_text,
+                request_bytes=req_bytes,
+                response_bytes=response_bytes_total,
+                meta={},
+                chat_id=chat_id,
+            )
+            await session.commit()
+            log.info(
+                "messages.unary.completed",
+                status_code=upstream_status,
+                latency_ms=latency_ms,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+            )
+        except Exception:
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            log.exception("messages.unary.request_log_insert_failed")
+
+    return Response(
+        content=resp.content,
+        status_code=upstream_status,
+        media_type="application/json",
+        headers={"X-Request-Id": str(request_id)},
     )

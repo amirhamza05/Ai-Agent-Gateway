@@ -28,9 +28,9 @@ RUN apt-get update \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (fast Python package manager). Pinned to a specific version for
-# reproducible builds — bump deliberately when upgrading.
-COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
+# Install uv via pip — avoids pulling from ghcr.io which may be unreachable.
+# Pinned for reproducibility; bump deliberately.
+RUN pip install uv==0.5.11
 
 WORKDIR /app
 

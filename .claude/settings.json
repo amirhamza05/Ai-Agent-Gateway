@@ -58,7 +58,11 @@
       "PowerShell(cd \"d:\\\\office_work\\\\ai\\\\Gateway\"; $env:DOCKER_BUILDKIT = \"0\"; docker compose build app)",
       "PowerShell(cd \"d:\\\\office_work\\\\ai\\\\Gateway\"; $env:DOCKER_BUILDKIT = \"0\"; docker compose build app; Write-Host \"EXIT:$LASTEXITCODE\")",
       "PowerShell(cd \"d:\\\\office_work\\\\ai\\\\Gateway\\\\app\"; docker build -f Dockerfile.patch -t gateway-app:latest .; Write-Host \"EXIT:$LASTEXITCODE\")",
-      "PowerShell(Start-Sleep -Seconds 5; \\(Invoke-WebRequest -Uri \"http://localhost:8000/healthz\" -UseBasicParsing\\).StatusCode)"
+      "PowerShell(Start-Sleep -Seconds 5; \\(Invoke-WebRequest -Uri \"http://localhost:8000/healthz\" -UseBasicParsing\\).StatusCode)",
+      "Bash(ssh-keygen -R 185.7.81.237)",
+      "WebSearch",
+      "Bash(findstr -i \"uv\\\\|gateway\\\\|app\")",
+      "Bash(docker cp *)"
     ],
     "deny": [
       "Read(.env)",
