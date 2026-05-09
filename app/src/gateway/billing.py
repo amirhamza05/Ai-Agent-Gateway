@@ -84,12 +84,20 @@ _PER_MTOKEN = Decimal(1_000_000)
 
 @dataclass(frozen=True)
 class _PriceRow:
-    """One pricing row, normalised to ``Decimal``."""
+    """One pricing row, normalised to ``Decimal``.
+
+    ``cache_read_per_mtoken`` and ``cache_write_per_mtoken`` are the
+    Anthropic prompt-cache prices. ``None`` on either means the row
+    pre-dates cache pricing — those tokens are then billed as regular
+    input (cache_read) or skipped (cache_write).
+    """
 
     model: str
     endpoint_kind: str
     input_per_mtoken: Decimal
     output_per_mtoken: Decimal | None
+    cache_read_per_mtoken: Decimal | None
+    cache_write_per_mtoken: Decimal | None
     is_allowed: bool
 
 
@@ -151,6 +159,16 @@ class PricingCache:
                         if row.output_per_mtoken is not None
                         else None
                     ),
+                    cache_read_per_mtoken=(
+                        Decimal(row.cache_read_per_mtoken)
+                        if row.cache_read_per_mtoken is not None
+                        else None
+                    ),
+                    cache_write_per_mtoken=(
+                        Decimal(row.cache_write_per_mtoken)
+                        if row.cache_write_per_mtoken is not None
+                        else None
+                    ),
                     is_allowed=bool(row.is_allowed),
                 )
                 for row in rows
@@ -168,6 +186,8 @@ class PricingCache:
                         endpoint_kind="messages",
                         input_per_mtoken=Decimal(str(prices["in"])),
                         output_per_mtoken=Decimal(str(prices["out"])),
+                        cache_read_per_mtoken=None,
+                        cache_write_per_mtoken=None,
                         is_allowed=True,
                     )
                 for model, price in EMBEDDING_PRICES_PER_MTOKEN.items():
@@ -176,6 +196,8 @@ class PricingCache:
                         endpoint_kind="embeddings",
                         input_per_mtoken=Decimal(str(price)),
                         output_per_mtoken=None,
+                        cache_read_per_mtoken=None,
+                        cache_write_per_mtoken=None,
                         is_allowed=True,
                     )
 
@@ -215,21 +237,36 @@ def compute_cost_usd(
     tokens_in: int,
     tokens_out: int,
     *,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
     prices: dict[str, _PriceRow] | None = None,
 ) -> Decimal | None:
     """Return cost in USD for ``model``, quantized to 6 decimals.
 
     Returns ``None`` when the model isn't priced (caller logs a warning
     so we notice an unpriced model in production without breaking the
-    request). Returns ``Decimal("0")`` when both token counts are zero.
+    request). Returns ``Decimal("0")`` when all token counts are zero.
+
+    Cache pricing semantics — Anthropic reports prompt-cache tokens
+    SEPARATELY from regular input tokens. Their ``input_tokens`` field is
+    the count of NEW (uncached) input tokens; ``cache_read_input_tokens``
+    are tokens served from a cache hit, billed at a discount;
+    ``cache_creation_input_tokens`` are tokens written into the cache,
+    billed at a premium. We pass each through its own per-Mtoken rate. If
+    the row has no cache pricing configured (older row, or a non-Anthropic
+    provider), cache_read tokens fall back to the regular input rate and
+    cache_write tokens are billed at zero.
 
     ``prices`` is the snapshot returned by
     :meth:`PricingCache.get_all`. When omitted (unit tests, ad-hoc
     invocations) the function falls back to the legacy in-process
-    :data:`PRICES_PER_MTOKEN` dict so existing callers keep working.
+    :data:`PRICES_PER_MTOKEN` dict so existing callers keep working;
+    cache prices are not available in the legacy fallback.
     """
     price_in: Decimal
     price_out: Decimal
+    price_cache_read: Decimal
+    price_cache_write: Decimal
 
     if prices is not None:
         row = prices.get(model)
@@ -242,6 +279,22 @@ def compute_cost_usd(
             if row.output_per_mtoken is not None
             else Decimal(0)
         )
+        # Fall back to the regular input rate for cache reads when the
+        # row pre-dates cache pricing — keeps the ledger conservative
+        # without dropping the cache_read tokens entirely.
+        price_cache_read = (
+            row.cache_read_per_mtoken
+            if row.cache_read_per_mtoken is not None
+            else price_in
+        )
+        # Cache writes have no analogue in legacy pricing, so charge zero
+        # rather than guess. The dashboard surfaces unpriced rows so the
+        # operator can fix it.
+        price_cache_write = (
+            row.cache_write_per_mtoken
+            if row.cache_write_per_mtoken is not None
+            else Decimal(0)
+        )
     else:
         legacy = PRICES_PER_MTOKEN.get(model)
         if legacy is None:
@@ -249,10 +302,15 @@ def compute_cost_usd(
             return None
         price_in = Decimal(str(legacy["in"]))
         price_out = Decimal(str(legacy["out"]))
+        # Legacy fallback has no cache rates; same rules as above.
+        price_cache_read = price_in
+        price_cache_write = Decimal(0)
 
     cost = (
         Decimal(int(tokens_in)) * price_in
         + Decimal(int(tokens_out)) * price_out
+        + Decimal(int(cache_read_tokens)) * price_cache_read
+        + Decimal(int(cache_write_tokens)) * price_cache_write
     ) / _PER_MTOKEN
 
     return cost.quantize(_COST_QUANT, rounding=ROUND_HALF_EVEN)

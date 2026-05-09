@@ -48,6 +48,8 @@ async def insert_request_log(
     response_bytes: int | None,
     meta: dict | None,
     chat_id: str | None = None,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
 ) -> None:
     """Append a row to ``request_log``.
 
@@ -72,6 +74,8 @@ async def insert_request_log(
         model=model,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
         cost_usd=cost_usd,
         status_code=status_code,
         error_code=error_code,

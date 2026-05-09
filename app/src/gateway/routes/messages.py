@@ -43,7 +43,7 @@ from gateway.credential_store import CredentialMissing, CredentialStore, SETTING
 from gateway.db.models import User
 from gateway.limits import enforce_monthly_cap
 from gateway.logging_mw import insert_request_log
-from gateway.routes._sse_parse import extract_usage
+from gateway.routes._sse_parse import extract_usage_full
 from gateway.truncate import truncate, truncate_bytes
 from gateway.upstream.openrouter import auth_headers
 
@@ -159,6 +159,8 @@ async def messages(
         "error_code": None,
         "tokens_in": 0,
         "tokens_out": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
         "usage_seen": False,
         # ``response_bytes_total`` tracks the TRUE upstream byte count
         # (incremented per chunk before any clipping). This is what we
@@ -234,15 +236,24 @@ async def messages(
                     # a regex pass on every chunk that doesn't contain a
                     # usage event (i.e. almost all of them).
                     if b'"usage"' in tail:
-                        in_t, out_t = extract_usage(
+                        in_t, out_t, cr_t, cw_t = extract_usage_full(
                             tail.decode("utf-8", errors="ignore")
                         )
-                        if in_t is not None or out_t is not None:
+                        if (
+                            in_t is not None
+                            or out_t is not None
+                            or cr_t is not None
+                            or cw_t is not None
+                        ):
                             state["usage_seen"] = True
                             if in_t is not None:
                                 state["tokens_in"] = in_t
                             if out_t is not None:
                                 state["tokens_out"] = out_t
+                            if cr_t is not None:
+                                state["cache_read_tokens"] = cr_t
+                            if cw_t is not None:
+                                state["cache_write_tokens"] = cw_t
 
                     yield bytes(chunk)
         except httpx.HTTPError as exc:
@@ -267,7 +278,7 @@ async def messages(
             # rotated past it. The accumulator is bounded so this is
             # cheap.
             if not state["usage_seen"] and accumulated:
-                in_t, out_t = extract_usage(
+                in_t, out_t, cr_t, cw_t = extract_usage_full(
                     bytes(accumulated).decode("utf-8", errors="ignore")
                 )
                 if in_t is not None:
@@ -275,6 +286,12 @@ async def messages(
                     state["usage_seen"] = True
                 if out_t is not None:
                     state["tokens_out"] = out_t
+                    state["usage_seen"] = True
+                if cr_t is not None:
+                    state["cache_read_tokens"] = cr_t
+                    state["usage_seen"] = True
+                if cw_t is not None:
+                    state["cache_write_tokens"] = cw_t
                     state["usage_seen"] = True
 
             if not state["usage_seen"] and state["error_code"] is None:
@@ -298,6 +315,8 @@ async def messages(
                 body.model,
                 state["tokens_in"],
                 state["tokens_out"],
+                cache_read_tokens=state["cache_read_tokens"],
+                cache_write_tokens=state["cache_write_tokens"],
                 prices=prices,
             )
 
@@ -310,6 +329,8 @@ async def messages(
                     model=body.model,
                     tokens_in=state["tokens_in"],
                     tokens_out=state["tokens_out"],
+                    cache_read_tokens=state["cache_read_tokens"],
+                    cache_write_tokens=state["cache_write_tokens"],
                     cost_usd=cost,
                     status_code=state["upstream_status"] or None,
                     error_code=state["error_code"],
@@ -400,6 +421,8 @@ async def _messages_unary(
 
     tokens_in = 0
     tokens_out = 0
+    cache_read_tokens = 0
+    cache_write_tokens = 0
     error_code: str | None = None
     upstream_status = 0
     response_text = ""
@@ -416,6 +439,8 @@ async def _messages_unary(
                 usage = resp.json().get("usage", {})
                 tokens_in = usage.get("input_tokens", 0) or 0
                 tokens_out = usage.get("output_tokens", 0) or 0
+                cache_read_tokens = usage.get("cache_read_input_tokens", 0) or 0
+                cache_write_tokens = usage.get("cache_creation_input_tokens", 0) or 0
             except Exception:
                 pass
         else:
@@ -430,7 +455,14 @@ async def _messages_unary(
     finally:
         latency_ms = int((time.monotonic() - started) * 1000)
         _, req_bytes = truncate(json.dumps(upstream_body), settings.max_body_bytes)
-        cost = compute_cost_usd(body.model, tokens_in, tokens_out, prices=prices)
+        cost = compute_cost_usd(
+            body.model,
+            tokens_in,
+            tokens_out,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            prices=prices,
+        )
         try:
             await insert_request_log(
                 session,
@@ -440,6 +472,8 @@ async def _messages_unary(
                 model=body.model,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
                 cost_usd=cost,
                 status_code=upstream_status or None,
                 error_code=error_code,

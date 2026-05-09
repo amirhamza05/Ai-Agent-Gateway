@@ -35,17 +35,38 @@ _USAGE_RE = re.compile(r'"usage"\s*:\s*(\{[^}]*\})')
 def extract_usage(buffer: str) -> tuple[int | None, int | None]:
     """Return ``(input_tokens, output_tokens)`` from an SSE text buffer.
 
+    Thin wrapper around :func:`extract_usage_full` for callers that only
+    need the regular input/output counts. New code that also needs cache
+    counts should call :func:`extract_usage_full` directly.
+    """
+    in_t, out_t, _, _ = extract_usage_full(buffer)
+    return in_t, out_t
+
+
+def extract_usage_full(
+    buffer: str,
+) -> tuple[int | None, int | None, int | None, int | None]:
+    """Return ``(input, output, cache_read, cache_write)`` from a buffer.
+
     Scans for the LAST ``"usage": {...}`` JSON fragment in ``buffer`` and
-    parses it. Returns ``(None, None)`` if no usage object is found OR if
-    the matched fragment fails to parse as JSON (defensive — a partial
-    chunk could yield a malformed match while bytes are still in flight).
+    parses it. Returns ``(None, None, None, None)`` if no usage object is
+    found OR if the matched fragment fails to parse as JSON (defensive —
+    a partial chunk could yield a malformed match while bytes are still
+    in flight).
+
+    Anthropic reports cache tokens under the keys
+    ``cache_read_input_tokens`` (cache hits, billed at the cheap rate)
+    and ``cache_creation_input_tokens`` (tokens written into the cache,
+    billed at the premium rate). They are reported alongside
+    ``input_tokens``/``output_tokens`` and are NOT counted inside the
+    ``input_tokens`` figure — see the Anthropic streaming usage docs.
 
     Returned values are ``int | None`` per field; the call site coerces
     missing entries to 0 for storage.
     """
     matches = _USAGE_RE.findall(buffer)
     if not matches:
-        return None, None
+        return None, None, None, None
 
     # Walk matches from newest to oldest so a malformed trailing match
     # (e.g. a chunk boundary clipped mid-object) falls back to the last
@@ -59,12 +80,21 @@ def extract_usage(buffer: str) -> tuple[int | None, int | None]:
             continue
         in_t = obj.get("input_tokens")
         out_t = obj.get("output_tokens")
-        # Only return if at least one of the two showed up — a stray
+        cache_read = obj.get("cache_read_input_tokens")
+        cache_write = obj.get("cache_creation_input_tokens")
+        # Only return if at least one of the four showed up — a stray
         # ``"usage": {}`` in a different context shouldn't override a
         # real reading from earlier in the stream.
-        if in_t is not None or out_t is not None:
+        if (
+            in_t is not None
+            or out_t is not None
+            or cache_read is not None
+            or cache_write is not None
+        ):
             return (
                 int(in_t) if in_t is not None else None,
                 int(out_t) if out_t is not None else None,
+                int(cache_read) if cache_read is not None else None,
+                int(cache_write) if cache_write is not None else None,
             )
-    return None, None
+    return None, None, None, None

@@ -203,6 +203,12 @@ class RequestLog(Base):
     model: Mapped[str | None] = mapped_column(String, nullable=True)
     tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Anthropic prompt-cache tokens. ``cache_read_tokens`` are the tokens
+    # served from cache (much cheaper than fresh input). ``cache_write_tokens``
+    # are tokens written into the cache on this turn (slightly more expensive
+    # than fresh input). Both are billed via ``model_pricing.cache_*``.
+    cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Numeric(10,6) gives us $9999.999999 max with no float drift on summed
     # ledger values. Per-row cost is tiny — the precision is for the SUM().
     cost_usd: Mapped[Decimal | None] = mapped_column(
@@ -414,6 +420,19 @@ class ModelPricing(Base):
         nullable=False,
     )
     output_per_mtoken: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4),
+        nullable=True,
+    )
+    # Prompt-cache pricing (Anthropic). ``cache_read_per_mtoken`` is the
+    # discounted rate for tokens served from a cache hit; typically a tenth
+    # of the regular input price. ``cache_write_per_mtoken`` is the premium
+    # rate for tokens written into the cache on a given turn; typically
+    # 1.25× the regular input price. Both NULL on embedding rows.
+    cache_read_per_mtoken: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4),
+        nullable=True,
+    )
+    cache_write_per_mtoken: Mapped[Decimal | None] = mapped_column(
         Numeric(10, 4),
         nullable=True,
     )

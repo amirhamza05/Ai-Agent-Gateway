@@ -53,6 +53,33 @@
                class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
       </div>
 
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-gray-100">
+        <div class="sm:col-span-2 -mb-2">
+          <h3 class="text-sm font-semibold text-gray-700">Prompt Cache Pricing</h3>
+          <p class="text-xs text-gray-500">Anthropic prompt cache: read is the discounted hit rate, write is the premium write rate. Leave blank for non-cached or embedding models.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="cache_read_per_mtoken">
+            Cache read price (USD / M tokens)
+          </label>
+          <input type="number" id="cache_read_per_mtoken" name="cache_read_per_mtoken"
+                 value="{{ model_row.cache_read_per_mtoken if model_row and model_row.cache_read_per_mtoken else '' }}"
+                 min="0" step="0.0001"
+                 placeholder="e.g. 0.30"
+                 class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="cache_write_per_mtoken">
+            Cache write price (USD / M tokens)
+          </label>
+          <input type="number" id="cache_write_per_mtoken" name="cache_write_per_mtoken"
+                 value="{{ model_row.cache_write_per_mtoken if model_row and model_row.cache_write_per_mtoken else '' }}"
+                 min="0" step="0.0001"
+                 placeholder="e.g. 3.75"
+                 class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+        </div>
+      </div>
+
       <div class="flex items-center space-x-2">
         <input type="checkbox" id="is_allowed" name="is_allowed"
                {% if not model_row or model_row.is_allowed %}checked{% endif %}
