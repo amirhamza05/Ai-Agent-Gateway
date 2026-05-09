@@ -87,6 +87,22 @@ def _ensure_test_db_url() -> str:
     return _TEST_DATABASE_URL
 
 
+# Test-only seed for ``model_pricing``. Production migrations leave the
+# table empty so a fresh deploy can be configured from the dashboard, but
+# the dashboard + v1 tests assume a known set of priced models. Mirrors
+# the values that lived in migrations 0003 and 0006 before they were
+# stripped of seed data.
+_TEST_MODEL_PRICING: tuple[tuple[str, str, str, str | None, str | None, str | None], ...] = (
+    # (model, endpoint_kind, input_per_mtoken, output_per_mtoken,
+    #  cache_read_per_mtoken, cache_write_per_mtoken)
+    ("anthropic/claude-opus-4.7", "messages", "15.0000", "75.0000", "1.5000", "18.7500"),
+    ("anthropic/claude-sonnet-4.6", "messages", "3.0000", "15.0000", "0.3000", "3.7500"),
+    ("anthropic/claude-haiku-4.5", "messages", "1.0000", "5.0000", "0.1000", "1.2500"),
+    ("openai/text-embedding-3-small", "embeddings", "0.0200", None, None, None),
+    ("openai/text-embedding-3-large", "embeddings", "0.1300", None, None, None),
+)
+
+
 @pytest.fixture(scope="session")
 def _migrated_test_db() -> str:
     """Run Alembic ``upgrade head`` against ``TEST_DATABASE_URL`` once.
@@ -95,6 +111,11 @@ def _migrated_test_db() -> str:
     and wrapping that in an async fixture creates a session-scoped loop that
     gets closed before per-test engine teardown runs (causing
     ``RuntimeError: Event loop is closed`` during pool dispose).
+
+    After ``upgrade head`` completes, the fixture also seeds
+    ``model_pricing`` with the known set of test models — production
+    migrations no longer carry that seed (operators add rows from the
+    dashboard) but the dashboard + v1 tests assume the rows exist.
     """
     dsn = _ensure_test_db_url()
 
@@ -113,12 +134,65 @@ def _migrated_test_db() -> str:
             os.path.normpath(os.path.join(here, "..", "migrations")),
         )
         command.upgrade(cfg, "head")
+
+        _seed_model_pricing(dsn)
+
         return dsn
     finally:
         if original is None:
             os.environ.pop("DATABASE_URL", None)
         else:
             os.environ["DATABASE_URL"] = original
+
+
+def _seed_model_pricing(dsn: str) -> None:
+    """Idempotently seed the ``model_pricing`` table for the test session.
+
+    Drives an async engine via ``asyncio.run`` so we can reuse the
+    ``+asyncpg`` driver already in the project's runtime dependencies — no
+    extra sync DB driver needed. ``ON CONFLICT DO NOTHING`` makes the seed
+    safe to re-run (e.g. when pytest is invoked multiple times against
+    the same DB without a TRUNCATE in between).
+    """
+    import asyncio
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    async def _run() -> None:
+        engine = create_async_engine(dsn)
+        try:
+            async with engine.begin() as conn:
+                for (
+                    model,
+                    kind,
+                    input_p,
+                    output_p,
+                    cache_r,
+                    cache_w,
+                ) in _TEST_MODEL_PRICING:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO model_pricing "
+                            "(model, endpoint_kind, input_per_mtoken, "
+                            "output_per_mtoken, cache_read_per_mtoken, "
+                            "cache_write_per_mtoken, is_allowed) "
+                            "VALUES (:m, :k, :i, :o, :cr, :cw, TRUE) "
+                            "ON CONFLICT (model) DO NOTHING"
+                        ),
+                        {
+                            "m": model,
+                            "k": kind,
+                            "i": input_p,
+                            "o": output_p,
+                            "cr": cache_r,
+                            "cw": cache_w,
+                        },
+                    )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_run())
 
 
 @pytest.fixture

@@ -11,12 +11,10 @@ Phase D — Admin Dashboard. Adds:
   of the raw cookie token, plus expiry / revocation / activity columns.
 * ``model_pricing`` table — moves the in-process pricing dictionaries from
   ``gateway.billing`` into the database so operators can edit pricing and
-  the model allow-list without a deploy.
-
-The ``model_pricing`` seed list is **hard-coded inside this migration** by
-intent. Migrations must remain stable across code changes; importing from
-``gateway.billing`` would couple this revision's behaviour to whatever
-the application module looks like at upgrade time.
+  the model allow-list without a deploy. The table is created **empty**;
+  operators add rows from /dashboard/models. Until rows exist,
+  ``billing.PricingCache`` falls back to the legacy in-process constants
+  in ``gateway.billing`` so /v1 traffic keeps working.
 
 Downgrade drops everything Phase D added but keeps ``users`` and the
 existing tables untouched.
@@ -33,25 +31,6 @@ revision = "c3d4e5f6a7b8"
 down_revision = "b2c3d4e5f6a7"
 branch_labels = None
 depends_on = None
-
-
-# Hard-coded seed list. Mirrors the in-process dictionaries in
-# ``gateway.billing`` at the moment this migration was authored. Do NOT
-# import from ``gateway.billing`` — migrations must be stable across code
-# changes, and a future refactor of ``billing.py`` would otherwise break
-# replaying this revision.
-_MESSAGES_SEED: tuple[tuple[str, str, str], ...] = (
-    # (model, input_per_mtoken, output_per_mtoken)
-    ("anthropic/claude-opus-4.7", "15.0000", "75.0000"),
-    ("anthropic/claude-sonnet-4.6", "3.0000", "15.0000"),
-    ("anthropic/claude-haiku-4.5", "1.0000", "5.0000"),
-)
-
-_EMBEDDINGS_SEED: tuple[tuple[str, str], ...] = (
-    # (model, input_per_mtoken)
-    ("openai/text-embedding-3-small", "0.0200"),
-    ("openai/text-embedding-3-large", "0.1300"),
-)
 
 
 def upgrade() -> None:
@@ -145,28 +124,6 @@ def upgrade() -> None:
         ),
         sa.Column("disabled_at", sa.DateTime(timezone=True), nullable=True),
     )
-
-    # 4. Seed model_pricing with the rows currently in
-    #    ``billing.PRICES_PER_MTOKEN`` and ``EMBEDDING_PRICES_PER_MTOKEN``.
-    bind = op.get_bind()
-    for model, input_p, output_p in _MESSAGES_SEED:
-        bind.execute(
-            sa.text(
-                "INSERT INTO model_pricing "
-                "(model, endpoint_kind, input_per_mtoken, output_per_mtoken, is_allowed) "
-                "VALUES (:m, 'messages', :i, :o, TRUE)"
-            ),
-            {"m": model, "i": input_p, "o": output_p},
-        )
-    for model, input_p in _EMBEDDINGS_SEED:
-        bind.execute(
-            sa.text(
-                "INSERT INTO model_pricing "
-                "(model, endpoint_kind, input_per_mtoken, output_per_mtoken, is_allowed) "
-                "VALUES (:m, 'embeddings', :i, NULL, TRUE)"
-            ),
-            {"m": model, "i": input_p},
-        )
 
 
 def downgrade() -> None:

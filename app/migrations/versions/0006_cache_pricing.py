@@ -14,9 +14,8 @@ Adds:
   — per-request cache hit / cache write token counts as parsed from
   Anthropic's ``usage`` object.
 
-Upgrade also seeds Anthropic prompt-cache prices for the three models
-already present in ``model_pricing`` (opus / sonnet / haiku). Other rows
-keep NULL prices and skip the cache surcharge.
+The columns are added empty; cache prices are filled in by the operator
+from /dashboard/models when they enter pricing for each model.
 """
 
 from __future__ import annotations
@@ -29,17 +28,6 @@ revision = "f6a7b8c9d0e1"
 down_revision = "e5f6a7b8c9d0"
 branch_labels = None
 depends_on = None
-
-
-# Anthropic prompt-cache list prices (USD / Mtoken) at the time this
-# migration was authored. Rows are inserted only if the matching model
-# already exists in ``model_pricing``; we do not invent new rows here.
-_CACHE_SEED: tuple[tuple[str, str, str], ...] = (
-    # (model, cache_read_per_mtoken, cache_write_per_mtoken)
-    ("anthropic/claude-opus-4.7", "1.5000", "18.7500"),
-    ("anthropic/claude-sonnet-4.6", "0.3000", "3.7500"),
-    ("anthropic/claude-haiku-4.5", "0.1000", "1.2500"),
-)
 
 
 def upgrade() -> None:
@@ -60,17 +48,6 @@ def upgrade() -> None:
         "request_log",
         sa.Column("cache_write_tokens", sa.Integer(), nullable=True),
     )
-
-    bind = op.get_bind()
-    for model, read_p, write_p in _CACHE_SEED:
-        bind.execute(
-            sa.text(
-                "UPDATE model_pricing "
-                "SET cache_read_per_mtoken = :r, cache_write_per_mtoken = :w "
-                "WHERE model = :m"
-            ),
-            {"m": model, "r": read_p, "w": write_p},
-        )
 
 
 def downgrade() -> None:
