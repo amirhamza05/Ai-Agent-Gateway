@@ -56,9 +56,16 @@ from gateway.dashboard.reports import (
     to_json,
     top_users,
 )
+from gateway.credential_store import (
+    CredentialStore,
+    SETTING_OPENROUTER_KEY,
+    SETTING_QDRANT_KEY,
+    SETTING_QDRANT_URL,
+)
 from gateway.db.models import (
     ApiToken,
     DashboardSession,
+    GatewaySettings,
     ModelPricing,
     RefreshToken,
     RequestLog,
@@ -1206,3 +1213,121 @@ async def reports_latency_json(
     async with request.app.state.db_session_factory() as session:
         data = await latency_percentiles(session, window=window)
     return JSONResponse(content=to_json(data))
+
+
+# ===========================================================================
+# Settings (OpenRouter + Qdrant credentials)
+# ===========================================================================
+
+_SETTINGS_KEYS = [SETTING_OPENROUTER_KEY, SETTING_QDRANT_URL, SETTING_QDRANT_KEY]
+
+
+def _mask(value: str) -> str:
+    """Return a masked representation for display (show first 4 chars only)."""
+    if not value:
+        return ""
+    if len(value) <= 4:
+        return "****"
+    return value[:4] + "****"
+
+
+@router.get("/settings")
+async def settings_page(
+    request: Request,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Render the credentials settings page."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    cred_store: CredentialStore = request.app.state.credential_store
+    async with request.app.state.db_session_factory() as session:
+        db_values = await cred_store.get_db_values(session)
+
+    # Build per-key status: where the value is coming from (db / env / unset)
+    def _source(key: str) -> str:
+        if key in db_values:
+            return "db"
+        if key == SETTING_OPENROUTER_KEY and settings.openrouter_api_key:
+            return "env"
+        if key == SETTING_QDRANT_URL and settings.qdrant_url:
+            return "env"
+        if key == SETTING_QDRANT_KEY and settings.qdrant_api_key:
+            return "env"
+        return "unset"
+
+    def _display_value(key: str) -> str:
+        if key in db_values:
+            return _mask(db_values[key])
+        if key == SETTING_OPENROUTER_KEY and settings.openrouter_api_key:
+            return _mask(settings.openrouter_api_key.get_secret_value())
+        if key == SETTING_QDRANT_URL and settings.qdrant_url:
+            return settings.qdrant_url  # URL is not secret — show it
+        if key == SETTING_QDRANT_KEY and settings.qdrant_api_key:
+            return _mask(settings.qdrant_api_key.get_secret_value())
+        return ""
+
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "source": {k: _source(k) for k in _SETTINGS_KEYS},
+        "display": {k: _display_value(k) for k in _SETTINGS_KEYS},
+        "SETTING_OPENROUTER_KEY": SETTING_OPENROUTER_KEY,
+        "SETTING_QDRANT_URL": SETTING_QDRANT_URL,
+        "SETTING_QDRANT_KEY": SETTING_QDRANT_KEY,
+    })
+    return request.app.state.templates.TemplateResponse(request, "settings.html", ctx)
+
+
+@router.post("/settings")
+async def settings_save(
+    request: Request,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Persist credential settings to gateway_settings table."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    form = dict(await request.form())
+    if not _check_csrf(form, request=request, secret=secret):
+        return _csrf_invalid()
+
+    user: User = request.state.dashboard_user
+    now = _dt.datetime.now(tz=_dt.timezone.utc)
+
+    updates: dict[str, str] = {}
+    for key in _SETTINGS_KEYS:
+        val = str(form.get(key, "")).strip()
+        if val:
+            updates[key] = val
+
+    if updates:
+        async with request.app.state.db_session_factory() as session:
+            for key, val in updates.items():
+                existing = await session.get(GatewaySettings, key)
+                if existing is None:
+                    session.add(GatewaySettings(
+                        key=key,
+                        value=val,
+                        updated_at=now,
+                        updated_by_id=user.id,
+                    ))
+                else:
+                    existing.value = val
+                    existing.updated_at = now
+                    existing.updated_by_id = user.id
+            await session.commit()
+
+        cred_store: CredentialStore = request.app.state.credential_store
+        cred_store.invalidate()
+        logger.info(
+            "dashboard.settings_updated",
+            admin_user_id=str(user.id),
+            keys=list(updates.keys()),
+        )
+
+    return _redirect(
+        "/dashboard/settings",
+        flash_msg="Settings saved." if updates else "No changes — empty fields were ignored.",
+        flash_kind="success" if updates else "info",
+        secret=secret,
+    )
