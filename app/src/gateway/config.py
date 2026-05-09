@@ -74,8 +74,10 @@ class Settings(BaseSettings):
     )
 
     # ---- OpenRouter ----------------------------------------------------
-    openrouter_api_key: SecretStr = Field(
-        ...,
+    # Optional: can be left unset in .env and configured from the dashboard
+    # settings page instead. The CredentialStore resolves DB → env → error.
+    openrouter_api_key: SecretStr | None = Field(
+        default=None,
         description="OpenRouter API key. Server-side only — never sent to the add-in.",
     )
     openrouter_base_url: str = Field(
@@ -84,12 +86,13 @@ class Settings(BaseSettings):
     )
 
     # ---- Qdrant --------------------------------------------------------
-    qdrant_url: str = Field(
-        ...,
+    # Optional: can be left unset in .env and configured from the dashboard.
+    qdrant_url: str | None = Field(
+        default=None,
         description="Qdrant cluster URL, e.g. https://xxx.cloud.qdrant.io",
     )
-    qdrant_api_key: SecretStr = Field(
-        ...,
+    qdrant_api_key: SecretStr | None = Field(
+        default=None,
         description="Qdrant API key. Server-side only.",
     )
 
