@@ -31,12 +31,22 @@ from gateway.config import Settings
 JWT_ISSUER = "geoswmm-gateway"
 
 
-def create_access_token(user_id: UUID, settings: Settings) -> tuple[str, int]:
+def create_access_token(
+    user_id: UUID,
+    settings: Settings,
+    *,
+    token_id: UUID | None = None,
+) -> tuple[str, int]:
     """Mint a signed access token for ``user_id``.
 
     Returns ``(token, expires_in_seconds)`` so the route handler can put the
     same lifetime in the JSON response without re-deriving it from the
     settings.
+
+    When ``token_id`` is supplied (the JWT was issued via
+    ``/auth/token/connect``) the token id is encoded in the ``tid`` claim
+    so downstream handlers can apply per-token model scoping. JWTs minted
+    via ``/auth/login`` carry no ``tid`` claim and are unrestricted.
     """
     expires_in = settings.access_token_expires_min * 60
     now = datetime.now(tz=UTC)
@@ -46,6 +56,8 @@ def create_access_token(user_id: UUID, settings: Settings) -> tuple[str, int]:
         "exp": int((now + timedelta(seconds=expires_in)).timestamp()),
         "iss": JWT_ISSUER,
     }
+    if token_id is not None:
+        payload["tid"] = str(token_id)
     token = jwt.encode(
         payload,
         settings.jwt_secret.get_secret_value(),

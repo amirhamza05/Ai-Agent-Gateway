@@ -41,7 +41,7 @@ from gateway.billing import compute_cost_usd, is_model_allowed
 from gateway.config import Settings, get_settings
 from gateway.credential_store import CredentialMissing, CredentialStore, SETTING_OPENROUTER_KEY
 from gateway.db.models import User
-from gateway.limits import enforce_monthly_cap
+from gateway.limits import enforce_monthly_cap, enforce_token_model_scope
 from gateway.logging_mw import insert_request_log
 from gateway.routes._sse_parse import extract_usage_full
 from gateway.truncate import truncate, truncate_bytes
@@ -120,6 +120,12 @@ async def messages(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": "model_not_allowed", "model": body.model},
         )
+
+    # Per-token scope: reject when the bearer JWT was minted from an
+    # api_token whose ``allow_all_models`` is False and the requested
+    # model isn't in its allow-list. No-op for user-level JWTs.
+    await enforce_token_model_scope(request, session, model=body.model)
+
     if body.stream is False:
         return await _messages_unary(body, request, user, session, settings, prices)
 

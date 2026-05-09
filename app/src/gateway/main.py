@@ -23,6 +23,7 @@ from gateway.middleware import RequestSizeLimitMiddleware
 from gateway.routes.embeddings import router as embeddings_router
 from gateway.routes.health import router as health_router
 from gateway.routes.messages import router as messages_router
+from gateway.routes.models import router as models_router
 from gateway.routes.qdrant import router as qdrant_router
 from gateway.routes.tokens import router as tokens_router
 from gateway.routes.usage import router as usage_router
@@ -245,6 +246,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(tokens_router)
     app.include_router(usage_router)
+    app.include_router(models_router)
     app.include_router(messages_router)
     app.include_router(embeddings_router)
     app.include_router(qdrant_router)

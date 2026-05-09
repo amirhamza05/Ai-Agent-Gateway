@@ -25,12 +25,13 @@ from __future__ import annotations
 
 import structlog
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.auth.deps import get_db_session, require_user
 from gateway.billing import check_monthly_cap
 from gateway.config import Settings, get_settings
-from gateway.db.models import User
+from gateway.db.models import ApiToken, ApiTokenModel, User
 from gateway.ratelimit import check_user_rate_limit
 
 logger = structlog.get_logger(__name__)
@@ -110,3 +111,59 @@ async def enforce_monthly_cap(
             },
         )
     return user
+
+
+async def enforce_token_model_scope(
+    request: Request,
+    session: AsyncSession,
+    *,
+    model: str,
+) -> None:
+    """Reject the call if the bearer JWT's underlying api_token forbids ``model``.
+
+    Looks for ``request.state.api_token_id`` (set by ``require_user``
+    when the JWT carries a ``tid`` claim — i.e. it was minted via
+    ``/auth/token/connect``). When absent, this is a user-level JWT
+    from ``/auth/login`` and there is no per-token restriction to
+    apply. When present and ``allow_all_models=False``, the requested
+    model must be in the join-table allow-list — otherwise raise 403
+    ``model_not_in_token_scope`` so the add-in can surface a clear
+    "this token can't use that model" message.
+    """
+    api_token_id = getattr(request.state, "api_token_id", None)
+    if api_token_id is None:
+        return
+
+    token_row = await session.get(ApiToken, api_token_id)
+    if token_row is None or not token_row.is_active:
+        # The JWT outlived its api_token (revoked/deleted). Reject —
+        # we can't safely reason about the scope.
+        logger.info("limits.token_missing_or_inactive", token_id=str(api_token_id))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "unauthorized"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if token_row.allow_all_models:
+        return
+
+    scope_result = await session.execute(
+        select(ApiTokenModel.model).where(
+            ApiTokenModel.token_id == api_token_id,
+            ApiTokenModel.model == model,
+        )
+    )
+    if scope_result.scalar_one_or_none() is None:
+        logger.info(
+            "limits.token_model_scope_violation",
+            token_id=str(api_token_id),
+            model=model,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "model_not_in_token_scope",
+                "model": model,
+            },
+        )

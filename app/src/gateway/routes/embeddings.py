@@ -38,7 +38,7 @@ from gateway.billing import compute_embedding_cost_usd
 from gateway.config import Settings, get_settings
 from gateway.credential_store import CredentialMissing, CredentialStore, SETTING_OPENROUTER_KEY
 from gateway.db.models import User
-from gateway.limits import enforce_monthly_cap
+from gateway.limits import enforce_monthly_cap, enforce_token_model_scope
 from gateway.logging_mw import insert_request_log
 from gateway.truncate import truncate
 from gateway.upstream.openrouter import call_embeddings
@@ -108,6 +108,8 @@ async def embeddings(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": "model_not_allowed", "model": body.model},
         )
+
+    await enforce_token_model_scope(request, session, model=body.model)
 
     request_id = uuid4()
     chat_id = request.headers.get("X-Chat-Id") or None

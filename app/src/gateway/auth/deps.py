@@ -106,4 +106,17 @@ async def require_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Optional ``tid`` claim — only present on JWTs minted by
+    # ``/auth/token/connect``. Stored on request.state so per-token
+    # model scoping in /v1/messages and /v1/embeddings can read it
+    # without re-decoding the JWT.
+    tid_raw = claims.get("tid")
+    if tid_raw is not None:
+        try:
+            request.state.api_token_id = UUID(str(tid_raw))
+        except (TypeError, ValueError):
+            request.state.api_token_id = None
+    else:
+        request.state.api_token_id = None
+
     return user
