@@ -298,6 +298,15 @@ class ApiToken(Base):
         nullable=False,
         server_default=text("true"),
     )
+    # When TRUE, the token may use any currently-allowed model in
+    # ``model_pricing`` and auto-picks-up models added in the future.
+    # When FALSE the allow-list is the join-table rows in
+    # ``api_token_models``.
+    allow_all_models: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+    )
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
@@ -313,9 +322,48 @@ class ApiToken(Base):
     )
 
     user: Mapped[User] = relationship("User")
+    models: Mapped[list[ApiTokenModel]] = relationship(
+        "ApiTokenModel",
+        back_populates="token",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     __table_args__ = (
         Index("ix_api_tokens_user_id", "user_id"),
+    )
+
+
+class ApiTokenModel(Base):
+    """Per-token model allow-list row.
+
+    Only consulted when the parent ``api_tokens.allow_all_models`` is
+    FALSE. Otherwise the token uses every currently-allowed model in
+    ``model_pricing`` and the rows here are ignored.
+    """
+
+    __tablename__ = "api_token_models"
+
+    token_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("api_tokens.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    model: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("model_pricing.model", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    token: Mapped[ApiToken] = relationship("ApiToken", back_populates="models")
+
+    __table_args__ = (
+        Index("ix_api_token_models_token_id", "token_id"),
     )
 
 
