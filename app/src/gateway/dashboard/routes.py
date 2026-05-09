@@ -56,6 +56,7 @@ from gateway.dashboard.reports import (
     to_json,
     top_users,
 )
+from gateway.dashboard import server_stats
 from gateway.credential_store import (
     CredentialStore,
     SETTING_OPENROUTER_KEY,
@@ -1714,3 +1715,65 @@ async def settings_save(
         flash_kind="success" if updates else "info",
         secret=secret,
     )
+
+
+# ===========================================================================
+# Server status — operational snapshot (DB sizes, connections, Redis, disk)
+# ===========================================================================
+
+
+@router.get("/server")
+async def server_status(
+    request: Request,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Render the server-status page.
+
+    All panels are rendered in one round-trip so the operator gets a
+    consistent snapshot. The page is read-only — no CSRF token, no
+    forms — and the queries are cheap (catalog reads + a single
+    Redis SCAN per known key prefix).
+    """
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    redis_client = request.app.state.redis
+    started_monotonic = getattr(request.app.state, "started_monotonic", None)
+
+    async with request.app.state.db_session_factory() as session:
+        db_summary = await server_stats.database_size(session)
+        tables = await server_stats.table_sizes(session)
+        connections = await server_stats.connection_stats(session)
+        cache = await server_stats.cache_hit_ratio(session)
+        top_rows = await server_stats.top_request_log_rows(session, limit=10)
+
+    # Redis + disk are independent of the DB session — could parallelise
+    # with asyncio.gather later, but keeping it sequential keeps the
+    # error story simple (one stage fails → we know which one).
+    try:
+        redis_info = await server_stats.redis_summary(redis_client)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("dashboard.server.redis_failed", error=str(exc))
+        redis_info = None
+
+    try:
+        disk = await server_stats.host_disk_usage("/")
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("dashboard.server.disk_failed", error=str(exc))
+        disk = None
+
+    uptime = server_stats.app_uptime(started_monotonic)
+
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "db_summary": db_summary,
+        "tables": tables,
+        "connections": connections,
+        "cache": cache,
+        "top_rows": top_rows,
+        "redis_info": redis_info,
+        "disk": disk,
+        "uptime": uptime,
+        "gateway_version": settings.version,
+    })
+    return request.app.state.templates.TemplateResponse(request, "server.html", ctx)

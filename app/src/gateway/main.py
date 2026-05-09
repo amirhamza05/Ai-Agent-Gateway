@@ -8,6 +8,7 @@ or business logic here.
 
 from __future__ import annotations
 
+import time
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator
 
@@ -42,6 +43,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     so request handlers can reach them without re-creating per request.
     """
     settings: Settings = get_settings()
+
+    # Captured here (not in create_app) so it reflects when the worker
+    # actually started serving, not when the module was imported. Used
+    # by the /dashboard/server uptime panel.
+    app.state.started_monotonic = time.monotonic()
 
     configure_logging(level=settings.log_level, fmt=settings.log_format)
     logger.info("startup.begin", version=settings.version, log_format=settings.log_format)
@@ -213,8 +219,11 @@ def create_app() -> FastAPI:
             return dt.strftime("%Y-%m-%d %H:%M")  # type: ignore[union-attr]
         return str(dt)
 
+    from gateway.dashboard.server_stats import format_bytes as _format_bytes
+
     templates.env.filters["relative_time"] = _relative_time
     templates.env.filters["fmt_date"] = _fmt_date
+    templates.env.filters["fmt_bytes"] = _format_bytes
     app.state.templates = templates
 
     # ---- Static assets -------------------------------------------------
