@@ -65,6 +65,7 @@ from gateway.credential_store import (
 )
 from gateway.db.models import (
     ApiToken,
+    ApiTokenModel,
     DashboardSession,
     GatewaySettings,
     ModelPricing,
@@ -540,6 +541,32 @@ async def user_detail(
         )
         api_tokens = tokens_result.scalars().all()
 
+        # Per-token model scope rows so the template can show which
+        # specific models each restricted token may use.
+        token_ids = [t.id for t in api_tokens]
+        token_models: dict[UUID, list[str]] = {tid: [] for tid in token_ids}
+        if token_ids:
+            scope_rows = await session.execute(
+                select(ApiTokenModel.token_id, ApiTokenModel.model)
+                .where(ApiTokenModel.token_id.in_(token_ids))
+                .order_by(ApiTokenModel.model)
+            )
+            for tid, model_id in scope_rows.all():
+                token_models.setdefault(tid, []).append(model_id)
+
+        # Available pricing rows for the new-token form (only active
+        # rows; disabled or non-allowed models are hidden so the admin
+        # can't accidentally scope a token to an unusable model).
+        pricing_result = await session.execute(
+            select(ModelPricing)
+            .where(
+                ModelPricing.disabled_at.is_(None),
+                ModelPricing.is_allowed.is_(True),
+            )
+            .order_by(ModelPricing.endpoint_kind, ModelPricing.model)
+        )
+        available_models = pricing_result.scalars().all()
+
     csrf_token = _csrf_token(request, secret=secret)
     ctx = _base_context(request, secret=secret)
     ctx.update({
@@ -548,6 +575,8 @@ async def user_detail(
         "request_count": request_count,
         "recent_logs": recent_logs,
         "api_tokens": api_tokens,
+        "token_models": {str(k): v for k, v in token_models.items()},
+        "available_models": available_models,
         "csrf_token": csrf_token,
     })
     return request.app.state.templates.TemplateResponse(request, "users/detail.html", ctx)
@@ -704,17 +733,34 @@ async def user_create_api_token(
     settings = get_settings()
     secret = settings.jwt_secret.get_secret_value()
 
-    form = dict(await request.form())
-    if not _check_csrf(form, request=request, secret=secret):
+    raw_form = await request.form()
+    # CSRF check uses a flat dict; for the ``models`` multi-value list
+    # we keep the original FormData reference so getlist() works.
+    if not _check_csrf(dict(raw_form), request=request, secret=secret):
         return _csrf_invalid()
 
-    description = str(form.get("description", "")).strip()
-    author = str(form.get("author", "")).strip()
+    description = str(raw_form.get("description", "")).strip()
+    author = str(raw_form.get("author", "")).strip()
+    model_scope = str(raw_form.get("model_scope", "all")).strip()
+    selected_models = [
+        str(m).strip()
+        for m in raw_form.getlist("models")
+        if str(m).strip()
+    ]
+    allow_all_models = model_scope != "custom"
 
     if not description or not author:
         return _redirect(
             f"/dashboard/users/{user_id}",
             flash_msg="Description and author are required.",
+            flash_kind="error",
+            secret=secret,
+        )
+
+    if not allow_all_models and not selected_models:
+        return _redirect(
+            f"/dashboard/users/{user_id}",
+            flash_msg="Select at least one model when restricting the token.",
             flash_kind="error",
             secret=secret,
         )
@@ -727,17 +773,48 @@ async def user_create_api_token(
         if user is None:
             return _redirect("/dashboard/users", flash_msg="User not found.", flash_kind="error", secret=secret)
 
+        validated_models: list[str] = []
+        if not allow_all_models:
+            check = await session.execute(
+                select(ModelPricing.model).where(
+                    ModelPricing.model.in_(selected_models)
+                )
+            )
+            known = {r[0] for r in check.all()}
+            validated_models = [m for m in selected_models if m in known]
+            if not validated_models:
+                return _redirect(
+                    f"/dashboard/users/{user_id}",
+                    flash_msg="Selected models do not exist.",
+                    flash_kind="error",
+                    secret=secret,
+                )
+
         row = ApiToken(
             user_id=user_id,
             token_hash=token_hash,
             description=description,
             author=author,
+            allow_all_models=allow_all_models,
         )
         session.add(row)
+        await session.flush()
+
+        if not allow_all_models:
+            for model_id in validated_models:
+                session.add(ApiTokenModel(token_id=row.id, model=model_id))
+
         await session.commit()
         token_id = str(row.id)
 
-    logger.info("dashboard.api_token_created", admin_user_id=str(admin[0].id), user_id=str(user_id), token_id=token_id)
+    logger.info(
+        "dashboard.api_token_created",
+        admin_user_id=str(admin[0].id),
+        user_id=str(user_id),
+        token_id=token_id,
+        allow_all_models=allow_all_models,
+        model_count=len(validated_models),
+    )
 
     ctx = _base_context(request, secret=secret)
     ctx.update({
@@ -745,8 +822,100 @@ async def user_create_api_token(
         "raw_token": raw_token,
         "description": description,
         "author": author,
+        "allow_all_models": allow_all_models,
+        "scoped_models": validated_models,
     })
     return request.app.state.templates.TemplateResponse(request, "users/api_token_once.html", ctx)
+
+
+@router.post("/users/{user_id}/tokens/{token_id}/models")
+async def user_update_token_models(
+    request: Request,
+    user_id: UUID,
+    token_id: UUID,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Replace the model scope on an existing API token."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    raw_form = await request.form()
+    if not _check_csrf(dict(raw_form), request=request, secret=secret):
+        return _csrf_invalid()
+
+    model_scope = str(raw_form.get("model_scope", "all")).strip()
+    selected_models = [
+        str(m).strip()
+        for m in raw_form.getlist("models")
+        if str(m).strip()
+    ]
+    allow_all_models = model_scope != "custom"
+
+    if not allow_all_models and not selected_models:
+        return _redirect(
+            f"/dashboard/users/{user_id}",
+            flash_msg="Select at least one model when restricting the token.",
+            flash_kind="error",
+            secret=secret,
+        )
+
+    async with request.app.state.db_session_factory() as session:
+        token_row = await session.execute(
+            select(ApiToken).where(
+                ApiToken.id == token_id, ApiToken.user_id == user_id
+            )
+        )
+        token = token_row.scalar_one_or_none()
+        if token is None:
+            return _redirect(
+                f"/dashboard/users/{user_id}",
+                flash_msg="Token not found.",
+                flash_kind="error",
+                secret=secret,
+            )
+
+        validated_models: list[str] = []
+        if not allow_all_models:
+            check = await session.execute(
+                select(ModelPricing.model).where(
+                    ModelPricing.model.in_(selected_models)
+                )
+            )
+            known = {r[0] for r in check.all()}
+            validated_models = [m for m in selected_models if m in known]
+            if not validated_models:
+                return _redirect(
+                    f"/dashboard/users/{user_id}",
+                    flash_msg="Selected models do not exist.",
+                    flash_kind="error",
+                    secret=secret,
+                )
+
+        token.allow_all_models = allow_all_models
+        from sqlalchemy import delete as _delete
+
+        await session.execute(
+            _delete(ApiTokenModel).where(ApiTokenModel.token_id == token_id)
+        )
+        if not allow_all_models:
+            for model_id in validated_models:
+                session.add(ApiTokenModel(token_id=token_id, model=model_id))
+        await session.commit()
+
+    logger.info(
+        "dashboard.api_token_models_updated",
+        admin_user_id=str(admin[0].id),
+        user_id=str(user_id),
+        token_id=str(token_id),
+        allow_all_models=allow_all_models,
+        model_count=len(validated_models),
+    )
+    msg = (
+        "Token now uses all models."
+        if allow_all_models
+        else f"Token restricted to {len(validated_models)} model(s)."
+    )
+    return _redirect(f"/dashboard/users/{user_id}", flash_msg=msg, secret=secret)
 
 
 @router.post("/users/{user_id}/tokens/{token_id}/revoke")

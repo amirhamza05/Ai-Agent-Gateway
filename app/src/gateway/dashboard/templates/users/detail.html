@@ -113,6 +113,7 @@
       <tr>
         <th class="px-4 py-2 text-left">Description</th>
         <th class="px-4 py-2 text-left">Author</th>
+        <th class="px-4 py-2 text-left">Models</th>
         <th class="px-4 py-2 text-left">Locked PC</th>
         <th class="px-4 py-2 text-left">Status</th>
         <th class="px-4 py-2 text-left">Last Used</th>
@@ -122,9 +123,60 @@
     </thead>
     <tbody class="divide-y divide-gray-50">
       {% for tok in api_tokens %}
-      <tr class="hover:bg-gray-50">
+      {% set scoped = token_models.get(tok.id|string, []) %}
+      <tr class="hover:bg-gray-50 align-top">
         <td class="px-4 py-2 text-gray-800 font-medium">{{ tok.description }}</td>
         <td class="px-4 py-2 text-gray-600">{{ tok.author }}</td>
+        <td class="px-4 py-2 text-xs">
+          {% if tok.allow_all_models %}
+            <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded">All models</span>
+            <div class="text-gray-400 text-[11px] mt-1">auto-includes new ones</div>
+          {% else %}
+            <span class="bg-amber-100 text-amber-700 px-2 py-0.5 rounded">{{ scoped|length }} restricted</span>
+            {% if scoped %}
+              <div class="text-gray-500 mt-1 max-w-xs">
+                {% for m in scoped %}
+                  <div class="font-mono text-[11px] truncate" title="{{ m }}">{{ m }}</div>
+                {% endfor %}
+              </div>
+            {% endif %}
+          {% endif %}
+          {% if tok.is_active %}
+            <details class="mt-2">
+              <summary class="text-blue-600 cursor-pointer text-xs hover:underline">Edit models</summary>
+              <form method="post" action="/dashboard/users/{{ target_user.id }}/tokens/{{ tok.id }}/models"
+                    class="mt-2 p-3 bg-gray-50 border border-gray-200 rounded space-y-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label class="flex items-center space-x-2 text-xs">
+                  <input type="radio" name="model_scope" value="all"
+                         {% if tok.allow_all_models %}checked{% endif %}
+                         onclick="this.form.querySelector('.tok-models-{{ tok.id }}').classList.add('hidden')">
+                  <span><strong>All models</strong> — auto-include future ones</span>
+                </label>
+                <label class="flex items-center space-x-2 text-xs">
+                  <input type="radio" name="model_scope" value="custom"
+                         {% if not tok.allow_all_models %}checked{% endif %}
+                         onclick="this.form.querySelector('.tok-models-{{ tok.id }}').classList.remove('hidden')">
+                  <span><strong>Restrict</strong> to selected models</span>
+                </label>
+                <div class="tok-models-{{ tok.id }} {% if tok.allow_all_models %}hidden{% endif %} pl-4 border-l-2 border-gray-300 max-h-48 overflow-auto space-y-1">
+                  {% for m in available_models %}
+                  <label class="flex items-center space-x-2 text-xs">
+                    <input type="checkbox" name="models" value="{{ m.model }}"
+                           {% if m.model in scoped %}checked{% endif %}>
+                    <span class="font-mono">{{ m.model }}</span>
+                    <span class="text-gray-400">({{ m.endpoint_kind }})</span>
+                  </label>
+                  {% endfor %}
+                </div>
+                <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs">
+                  Save
+                </button>
+              </form>
+            </details>
+          {% endif %}
+        </td>
         <td class="px-4 py-2 text-gray-500 font-mono text-xs">
           {% if tok.machine_fingerprint %}
             <span title="{{ tok.machine_fingerprint }}">{{ tok.machine_fingerprint[:24] }}{% if tok.machine_fingerprint|length > 24 %}…{% endif %}</span>
@@ -160,22 +212,62 @@
 
   <!-- Create new token -->
   <div class="px-4 py-4 border-t border-gray-100 bg-gray-50">
-    <h3 class="text-sm font-semibold text-gray-700 mb-2">Create New API Token</h3>
+    <h3 class="text-sm font-semibold text-gray-700 mb-3">Create New API Token</h3>
     <form method="post" action="/dashboard/users/{{ target_user.id }}/tokens"
-          class="flex flex-wrap items-end gap-3">
+          class="space-y-4">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">Description</label>
-        <input type="text" name="description" placeholder="e.g. Office laptop — ArcPro"
-               required maxlength="255"
-               class="border border-gray-300 rounded px-3 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-blue-400">
+      <div class="flex flex-wrap items-end gap-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Description</label>
+          <input type="text" name="description" placeholder="e.g. Office laptop — ArcPro"
+                 required maxlength="255"
+                 class="border border-gray-300 rounded px-3 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-blue-400">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Author</label>
+          <input type="text" name="author" placeholder="e.g. John Smith"
+                 required maxlength="255"
+                 class="border border-gray-300 rounded px-3 py-2 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-400">
+        </div>
       </div>
+
       <div>
-        <label class="block text-xs text-gray-500 mb-1">Author</label>
-        <input type="text" name="author" placeholder="e.g. John Smith"
-               required maxlength="255"
-               class="border border-gray-300 rounded px-3 py-2 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-400">
+        <div class="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wide">Model Access</div>
+        <label class="flex items-start space-x-2 text-sm mb-2">
+          <input type="radio" name="model_scope" value="all" checked
+                 onclick="document.getElementById('new-token-models').classList.add('hidden')"
+                 class="mt-1">
+          <span>
+            <strong>All models</strong>
+            <div class="text-xs text-gray-500">Token uses every allowed model and auto-picks-up models added in the future.</div>
+          </span>
+        </label>
+        <label class="flex items-start space-x-2 text-sm">
+          <input type="radio" name="model_scope" value="custom"
+                 onclick="document.getElementById('new-token-models').classList.remove('hidden')"
+                 class="mt-1">
+          <span>
+            <strong>Custom models</strong>
+            <div class="text-xs text-gray-500">Restrict the token to a specific list of models.</div>
+          </span>
+        </label>
+
+        <div id="new-token-models" class="hidden mt-3 ml-6 p-3 bg-white border border-gray-200 rounded max-h-56 overflow-auto space-y-1">
+          {% if available_models %}
+            {% for m in available_models %}
+            <label class="flex items-center space-x-2 text-xs">
+              <input type="checkbox" name="models" value="{{ m.model }}">
+              <span class="font-mono">{{ m.model }}</span>
+              <span class="text-gray-400">({{ m.endpoint_kind }})</span>
+              <span class="text-gray-400">— in ${{ m.input_per_mtoken }}/M{% if m.output_per_mtoken %} · out ${{ m.output_per_mtoken }}/M{% endif %}</span>
+            </label>
+            {% endfor %}
+          {% else %}
+            <p class="text-xs text-gray-400">No active models defined yet. Add one under <a href="/dashboard/models" class="text-blue-600 hover:underline">Model Pricing</a> first.</p>
+          {% endif %}
+        </div>
       </div>
+
       <button type="submit"
               class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
         Create Token
