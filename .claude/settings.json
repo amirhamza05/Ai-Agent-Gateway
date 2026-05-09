@@ -62,7 +62,12 @@
       "Bash(ssh-keygen -R 185.7.81.237)",
       "WebSearch",
       "Bash(findstr -i \"uv\\\\|gateway\\\\|app\")",
-      "Bash(docker cp *)"
+      "Bash(docker cp *)",
+      "Bash(Get-ChildItem -Recurse -Path \"d:\\\\office_work\\\\ai\\\\Gateway\" -Filter \"dashboard*\" -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object FullName)",
+      "Bash(Get-Content \"d:\\\\office_work\\\\ai\\\\Gateway\\\\app\\\\src\\\\gateway\\\\dashboard\\\\routes.py\")",
+      "Bash(Measure-Object -Line)",
+      "Bash(Select-Object -ExpandProperty Lines)"
     ],
     "deny": [
       "Read(.env)",
