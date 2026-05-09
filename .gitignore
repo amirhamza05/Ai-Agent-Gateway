@@ -45,8 +45,9 @@ caddy_config/
 pgdata/
 redisdata/
 
-# Local logs / dumps
-logs/
+# Local logs / dumps — anchored to repo root so it doesn't match
+# unrelated `logs/` directories like dashboard templates.
+/logs/
 *.log
 backups/
 

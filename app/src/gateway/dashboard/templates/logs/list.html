@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Request Logs — GeoSWMM Admin{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-800 mb-4">Request Logs</h1>
+
+<!-- Filters -->
+<div class="bg-white shadow rounded p-4 mb-4">
+  <form method="get" action="/dashboard/logs" class="flex flex-wrap gap-3 items-end">
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">User email</label>
+      <input type="text" name="user" value="{{ filters.user }}" placeholder="search..."
+             class="border border-gray-300 rounded px-2 py-1 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">Endpoint</label>
+      <select name="endpoint"
+              class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+        <option value="">All</option>
+        <option value="/v1/messages" {% if filters.endpoint == "/v1/messages" %}selected{% endif %}>/v1/messages</option>
+        <option value="/v1/embeddings" {% if filters.endpoint == "/v1/embeddings" %}selected{% endif %}>/v1/embeddings</option>
+        <option value="/v1/qdrant" {% if filters.endpoint == "/v1/qdrant" %}selected{% endif %}>/v1/qdrant</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">Model</label>
+      <input type="text" name="model" value="{{ filters.model }}" placeholder="search..."
+             class="border border-gray-300 rounded px-2 py-1 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">Status code</label>
+      <input type="number" name="status" value="{{ filters.status }}" placeholder="e.g. 400"
+             class="border border-gray-300 rounded px-2 py-1 text-sm w-24 focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">From (UTC)</label>
+      <input type="datetime-local" name="from_" value="{{ filters.from_ }}"
+             class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">To (UTC)</label>
+      <input type="datetime-local" name="to" value="{{ filters.to }}"
+             class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">Page size</label>
+      <select name="size"
+              class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+        <option value="50" {% if size == 50 %}selected{% endif %}>50</option>
+        <option value="100" {% if size == 100 %}selected{% endif %}>100</option>
+        <option value="200" {% if size == 200 %}selected{% endif %}>200</option>
+      </select>
+    </div>
+    <div class="flex space-x-2">
+      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm">Filter</button>
+      <a href="/dashboard/logs" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-1.5 rounded text-sm">Reset</a>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white shadow rounded overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+      <tr>
+        <th class="px-3 py-3 text-left">ID</th>
+        <th class="px-3 py-3 text-left">Time</th>
+        <th class="px-3 py-3 text-left">User</th>
+        <th class="px-3 py-3 text-left">Endpoint</th>
+        <th class="px-3 py-3 text-left">Model</th>
+        <th class="px-3 py-3 text-right">Status</th>
+        <th class="px-3 py-3 text-right">Latency</th>
+        <th class="px-3 py-3 text-right">Cost</th>
+        <th class="px-3 py-3"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for row in log_rows %}
+      <tr class="hover:bg-gray-50">
+        <td class="px-3 py-2 text-gray-400 text-xs">{{ row.id }}</td>
+        <td class="px-3 py-2 text-gray-500 text-xs whitespace-nowrap">{{ row.created_at | relative_time }}</td>
+        <td class="px-3 py-2 text-gray-700 text-xs">{{ row.user_email or "—" }}</td>
+        <td class="px-3 py-2 text-gray-700 text-xs">{{ row.endpoint }}</td>
+        <td class="px-3 py-2 text-gray-600 text-xs">{{ row.model or "—" }}</td>
+        <td class="px-3 py-2 text-right">
+          <span class="{% if row.status_code and row.status_code >= 400 %}text-red-600{% else %}text-gray-700{% endif %} text-xs">
+            {{ row.status_code or "—" }}
+          </span>
+        </td>
+        <td class="px-3 py-2 text-right text-gray-600 text-xs">
+          {{ row.latency_ms ~ " ms" if row.latency_ms else "—" }}
+        </td>
+        <td class="px-3 py-2 text-right text-gray-600 text-xs">
+          {% if row.cost_usd %}${{ "%.6f"|format(row.cost_usd|float) }}{% else %}—{% endif %}
+        </td>
+        <td class="px-3 py-2 text-right">
+          <a href="/dashboard/logs/{{ row.id }}" class="text-blue-600 hover:underline text-xs">View</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="9" class="px-4 py-8 text-center text-gray-400">No log entries found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% set base_url = "/dashboard/logs" %}
+{% include "partials/pagination.html" %}
+{% endblock %}

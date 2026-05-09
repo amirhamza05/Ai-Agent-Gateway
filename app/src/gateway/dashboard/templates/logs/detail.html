@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Log #{{ log_row.id }} — GeoSWMM Admin{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-2xl font-bold text-gray-800">Log Entry #{{ log_row.id }}</h1>
+  <a href="/dashboard/logs" class="text-sm text-gray-500 hover:text-gray-700">Back to Logs</a>
+</div>
+
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+  <div class="bg-white shadow rounded p-4">
+    <div class="text-xs text-gray-500 mb-1">Status</div>
+    <div class="text-xl font-bold {% if log_row.status_code and log_row.status_code >= 400 %}text-red-600{% else %}text-gray-800{% endif %}">
+      {{ log_row.status_code or "—" }}
+    </div>
+  </div>
+  <div class="bg-white shadow rounded p-4">
+    <div class="text-xs text-gray-500 mb-1">Latency</div>
+    <div class="text-xl font-bold text-gray-800">{{ log_row.latency_ms ~ " ms" if log_row.latency_ms else "—" }}</div>
+  </div>
+  <div class="bg-white shadow rounded p-4">
+    <div class="text-xs text-gray-500 mb-1">Cost</div>
+    <div class="text-xl font-bold text-gray-800">
+      {% if log_row.cost_usd %}${{ "%.6f"|format(log_row.cost_usd|float) }}{% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="bg-white shadow rounded p-4">
+    <div class="text-xs text-gray-500 mb-1">Tokens</div>
+    <div class="text-sm font-medium text-gray-800">
+      {% if log_row.tokens_in or log_row.tokens_out %}
+        in: {{ log_row.tokens_in or 0 }} / out: {{ log_row.tokens_out or 0 }}
+      {% else %}—{% endif %}
+    </div>
+    {% if log_row.cache_read_tokens or log_row.cache_write_tokens %}
+    <div class="text-xs text-gray-500 mt-1">
+      cache: {{ log_row.cache_read_tokens or 0 }} read / {{ log_row.cache_write_tokens or 0 }} write
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="bg-white shadow rounded p-5 mb-4">
+  <dl class="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+    <div>
+      <dt class="text-gray-500">Request ID</dt>
+      <dd class="font-mono text-xs text-gray-700 break-all">{{ log_row.request_id }}</dd>
+    </div>
+    <div>
+      <dt class="text-gray-500">Time</dt>
+      <dd class="text-gray-700">{{ log_row.created_at | fmt_date }}</dd>
+    </div>
+    <div>
+      <dt class="text-gray-500">User</dt>
+      <dd class="text-gray-700">
+        {% if user %}
+          <a href="/dashboard/users/{{ user.id }}" class="text-blue-600 hover:underline">{{ user.email }}</a>
+        {% else %}—{% endif %}
+      </dd>
+    </div>
+    <div>
+      <dt class="text-gray-500">Endpoint</dt>
+      <dd class="text-gray-700 font-mono text-xs">{{ log_row.endpoint }}</dd>
+    </div>
+    <div>
+      <dt class="text-gray-500">Model</dt>
+      <dd class="text-gray-700 font-mono text-xs">{{ log_row.model or "—" }}</dd>
+    </div>
+    <div>
+      <dt class="text-gray-500">Error Code</dt>
+      <dd class="text-gray-700">{{ log_row.error_code or "—" }}</dd>
+    </div>
+    <div>
+      <dt class="text-gray-500">Client IP</dt>
+      <dd class="text-gray-700 font-mono text-xs">{{ log_row.client_ip or "—" }}</dd>
+    </div>
+    <div>
+      <dt class="text-gray-500">Client Version</dt>
+      <dd class="text-gray-700 text-xs">{{ log_row.client_version or "—" }}</dd>
+    </div>
+    <div>
+      <dt class="text-gray-500">Chat ID</dt>
+      <dd class="font-mono text-xs text-gray-700 break-all">{{ log_row.chat_id or "—" }}</dd>
+    </div>
+  </dl>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  <div class="bg-white shadow rounded p-4">
+    <h2 class="text-sm font-semibold text-gray-700 mb-2">
+      Request Body
+      {% if log_row.request_bytes %}
+        <span class="text-xs font-normal text-gray-400">
+          ({{ log_row.request_bytes }} bytes
+          {% if log_row.request_body and log_row.request_bytes > (req_body_str | length) %}
+            — truncated
+          {% endif %})
+        </span>
+      {% endif %}
+    </h2>
+    {% if req_body_str %}
+      <pre class="text-xs bg-gray-50 rounded p-3 overflow-auto max-h-96 whitespace-pre-wrap break-all">{{ req_body_str }}</pre>
+    {% else %}
+      <p class="text-gray-400 text-sm">No request body recorded.</p>
+    {% endif %}
+  </div>
+
+  <div class="bg-white shadow rounded p-4">
+    <h2 class="text-sm font-semibold text-gray-700 mb-2">
+      Response Body
+      {% if log_row.response_bytes %}
+        <span class="text-xs font-normal text-gray-400">
+          ({{ log_row.response_bytes }} bytes
+          {% if log_row.response_body and log_row.response_bytes > (log_row.response_body | length) %}
+            — truncated
+          {% endif %})
+        </span>
+      {% endif %}
+    </h2>
+    {% if log_row.response_body %}
+      <pre class="text-xs bg-gray-50 rounded p-3 overflow-auto max-h-96 whitespace-pre-wrap break-all">{{ log_row.response_body }}</pre>
+    {% else %}
+      <p class="text-gray-400 text-sm">No response body recorded.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
