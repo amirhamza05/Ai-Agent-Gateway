@@ -36,9 +36,6 @@ from typing import Any
 
 import httpx
 
-from gateway.config import Settings
-
-
 def build_client() -> httpx.AsyncClient:
     """Construct the gateway's OpenRouter HTTP client.
 
@@ -65,7 +62,7 @@ def build_client() -> httpx.AsyncClient:
     )
 
 
-def auth_headers(settings: Settings) -> dict[str, str]:
+def auth_headers(api_key: str) -> dict[str, str]:
     """Return the Authorization + identifying headers for OpenRouter.
 
     OpenRouter encourages identifying headers (``HTTP-Referer``,
@@ -77,7 +74,7 @@ def auth_headers(settings: Settings) -> dict[str, str]:
     the user's bearer.
     """
     return {
-        "Authorization": f"Bearer {settings.openrouter_api_key.get_secret_value()}",
+        "Authorization": f"Bearer {api_key}",
         "HTTP-Referer": "https://geoswmm-gateway",
         "X-Title": "GeoSWMM Gateway",
     }
@@ -86,7 +83,8 @@ def auth_headers(settings: Settings) -> dict[str, str]:
 async def call_embeddings(
     client: httpx.AsyncClient,
     *,
-    settings: Settings,
+    api_key: str,
+    base_url: str,
     model: str,
     inputs: list[str],
 ) -> tuple[httpx.Response, dict[str, Any] | None]:
@@ -107,10 +105,10 @@ async def call_embeddings(
     The shared :class:`httpx.AsyncClient` is the gateway's pooled
     OpenRouter client — pass ``request.app.state.openrouter_client``.
     """
-    url = f"{settings.openrouter_base_url}/embeddings"
+    url = f"{base_url}/embeddings"
     body: dict[str, Any] = {"model": model, "input": inputs}
 
-    resp = await client.post(url, json=body, headers=auth_headers(settings))
+    resp = await client.post(url, json=body, headers=auth_headers(api_key))
 
     parsed: dict[str, Any] | None
     try:

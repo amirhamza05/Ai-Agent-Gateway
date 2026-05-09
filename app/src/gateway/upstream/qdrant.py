@@ -37,9 +37,6 @@ import re
 import httpx
 from fastapi import HTTPException, status
 
-from gateway.config import Settings
-
-
 # Strict per the plan: alphanumerics, underscore, dash. Cap at 64 chars
 # so we don't dump a megabyte of crap into a URL via a misuse. The regex
 # is *anchored* so partial matches (e.g. ``foo/../bar``) are rejected.
@@ -68,7 +65,7 @@ def build_client() -> httpx.AsyncClient:
     )
 
 
-def auth_headers(settings: Settings) -> dict[str, str]:
+def auth_headers(api_key: str) -> dict[str, str]:
     """Return the headers Qdrant requires for an authenticated request.
 
     Caller responsibility: do NOT pass through the inbound
@@ -76,7 +73,7 @@ def auth_headers(settings: Settings) -> dict[str, str]:
     key, never the user's bearer.
     """
     return {
-        "api-key": settings.qdrant_api_key.get_secret_value(),
+        "api-key": api_key,
         "Content-Type": "application/json",
     }
 
@@ -96,7 +93,7 @@ def validate_collection(name: str) -> None:
         )
 
 
-def search_url(settings: Settings, collection: str) -> str:
+def search_url(qdrant_url: str, collection: str) -> str:
     """Build the points-search URL for ``collection``.
 
     Caller MUST have already called :func:`validate_collection` — this
@@ -105,11 +102,11 @@ def search_url(settings: Settings, collection: str) -> str:
     expected to validate at body-parse time and surface the 400 with
     the rest of their request validation.
     """
-    base = settings.qdrant_url.rstrip("/")
+    base = qdrant_url.rstrip("/")
     return f"{base}/collections/{collection}/points/search"
 
 
-def upsert_url(settings: Settings, collection: str, *, wait: bool = True) -> str:
+def upsert_url(qdrant_url: str, collection: str, *, wait: bool = True) -> str:
     """Build the points-upsert URL for ``collection``.
 
     Qdrant accepts ``wait`` as a query parameter to switch between
@@ -117,6 +114,6 @@ def upsert_url(settings: Settings, collection: str, *, wait: bool = True) -> str
     caller via the request body so the gateway's URL construction stays
     a function of validated data.
     """
-    base = settings.qdrant_url.rstrip("/")
+    base = qdrant_url.rstrip("/")
     wait_q = "true" if wait else "false"
     return f"{base}/collections/{collection}/points?wait={wait_q}"
