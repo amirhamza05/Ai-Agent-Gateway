@@ -150,7 +150,7 @@ When you resolve any of these, update §16 of the plan with the decision and rat
 
 ## Dashboard
 
-Bootstrap: `docker compose run --rm app gateway-admin promote <email>` sets `is_admin=TRUE` for an existing user.
+Bootstrap: migration `0007_seed_admin` seeds a single admin (`admin@gmail.com` / `password`) at `alembic upgrade head` time so a fresh deploy can sign in directly. To promote a teammate later, register them via `/auth/register` then `docker compose run --rm app gateway-admin promote <email>`. The well-known seeded credential is for trial-month convenience — replace it on any public-facing deploy.
 
 Login URL: `http://localhost:8000/dashboard/login` — cookie-based session, 8-hour expiry, refreshed on activity. Sessions are backed by `dashboard_sessions` table (SHA-256 hashed token, never the raw value).
 

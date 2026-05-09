@@ -9,7 +9,9 @@ See [GatewayServerPlan.md](GatewayServerPlan.md) for the spec and [CLAUDE.md](CL
 ```powershell
 # 1. Configure
 copy .env.example .env
-# Open .env and fill in OPENROUTER_API_KEY, QDRANT_*, JWT_SECRET, POSTGRES_PASSWORD.
+# Set JWT_SECRET, POSTGRES_PASSWORD, DATABASE_URL.
+# OpenRouter + Qdrant credentials are entered later from the dashboard
+# at /dashboard/settings — leave those blank in .env.
 
 # 2. Start dependencies
 docker compose up -d postgres redis
@@ -54,11 +56,25 @@ docker compose run --rm app pytest -v
 
 ## Deployment
 
-Deploy targets a single Ubuntu 24.04 VPS (4 vCPU / 4 GB / 20 GB) for a one-month trial. See §11 of the plan for the production Compose setup. Set `PUBLIC_HOSTNAME` in `.env` to your real domain and Caddy will provision Let's Encrypt automatically.
+Deploy targets a single Ubuntu 24.04 VPS (4 vCPU / 4 GB / 20 GB) for a one-month trial. See §11 of the plan for the production Compose setup, and [ops/README.md](ops/README.md) for the operational runbook (log cap, disk alarm, backups, log-reading recipes).
+
+Bootstrap order on a fresh VPS:
+
+1. `copy .env.example .env` and set: `JWT_SECRET`, `POSTGRES_PASSWORD`, `DATABASE_URL`, and `PUBLIC_HOSTNAME` (the domain Caddy will request a Let's Encrypt cert for). Upstream credentials (OpenRouter, Qdrant) are entered from the dashboard later — leave them blank in `.env`.
+2. `docker compose up -d postgres redis`
+3. `docker compose run --rm app alembic upgrade head` — migrations create the schema and seed a single admin user (`admin@gmail.com` / `password`). Nothing else is seeded; model pricing and upstream credentials are configured from the dashboard.
+4. `docker compose up -d app caddy`
+5. Sign in at `https://<PUBLIC_HOSTNAME>/dashboard/login` as `admin@gmail.com` / `password`. Then:
+   - **Settings** — enter `OPENROUTER_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`. `CredentialStore` picks them up within 30 s (per-worker TTL cache) with no app restart.
+   - **Models** — add the model pricing rows you want allow-listed. The gateway falls back to in-process bootstrap prices for `claude-opus-4.7` / `sonnet-4.6` / `haiku-4.5` / `text-embedding-3-*` until you do, and logs a warning.
+   - For a public-facing deploy, create a fresh admin via **Users → New User** and either deactivate `admin@gmail.com` or rotate its `password_hash` directly with `psql`. The seeded credential is well-known.
+
+Caddy provisions and renews Let's Encrypt certs automatically as long as `PUBLIC_HOSTNAME` resolves to the VPS and ports 80/443 are open.
 
 ## Security
 
-- Server-side keys (OpenRouter, Qdrant, JWT secret, Postgres password) live only in `.env` on the VPS.
+- Server-side secrets (`JWT_SECRET`, `POSTGRES_PASSWORD`) live only in `.env` on the VPS.
+- Upstream credentials (`OPENROUTER_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`) may live in `.env` **or** in the `gateway_settings` table (entered via `/dashboard/settings`). The `CredentialStore` resolves DB → env → error, so a value in either place is enough.
 - The add-in only ever holds a per-user access + refresh token issued by `/auth/login`.
 - Refresh tokens are stored as SHA-256 hashes; raw tokens are never persisted server-side.
 - Run `/security-audit` (Claude command) before deployment.
@@ -96,13 +112,13 @@ commands, log-reading recipes) lives in [ops/README.md](ops/README.md).
 
 The operator admin dashboard lives at `/dashboard/`. It requires a session cookie issued via `/dashboard/login`.
 
-**Bootstrap the first admin:**
+**First login (fresh deploy):** `admin@gmail.com` / `password` — seeded by migration `0007_seed_admin`. The seeded credential is intentionally well-known; for any public-facing deploy, create a replacement admin via **Users → New User** and deactivate this one.
+
+**Promoting another user to admin** (post-bootstrap, e.g. when adding a teammate who registered via `/auth/register`):
 
 ```powershell
-docker compose run --rm app gateway-admin promote admin@yourcompany.com
+docker compose run --rm app gateway-admin promote teammate@example.com
 ```
-
-This sets `is_admin=TRUE` for an existing registered user. There is no "first request creates admin" magic — you must have the user registered first.
 
 **Login URL:** `http://localhost:8000/dashboard/login`
 
