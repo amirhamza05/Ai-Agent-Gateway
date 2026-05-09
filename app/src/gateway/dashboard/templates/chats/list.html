@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Chats — GeoSWMM Admin{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-800 mb-4">Chats</h1>
+<p class="text-sm text-gray-500 mb-4">
+  One row per chat (grouped by <code class="font-mono text-xs bg-gray-100 px-1 rounded">X-Chat-Id</code> header).
+  Click a chat to see every prompt / response turn in the conversation.
+</p>
+
+<!-- Filters -->
+<div class="bg-white shadow rounded p-4 mb-4">
+  <form method="get" action="/dashboard/chats" class="flex flex-wrap gap-3 items-end">
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">User email</label>
+      <input type="text" name="user" value="{{ filters.user }}" placeholder="search..."
+             class="border border-gray-300 rounded px-2 py-1 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">Model</label>
+      <input type="text" name="model" value="{{ filters.model }}" placeholder="search..."
+             class="border border-gray-300 rounded px-2 py-1 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">From (UTC)</label>
+      <input type="datetime-local" name="from_" value="{{ filters.from_ }}"
+             class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">To (UTC)</label>
+      <input type="datetime-local" name="to" value="{{ filters.to }}"
+             class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">Page size</label>
+      <select name="size"
+              class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+        <option value="50" {% if size == 50 %}selected{% endif %}>50</option>
+        <option value="100" {% if size == 100 %}selected{% endif %}>100</option>
+        <option value="200" {% if size == 200 %}selected{% endif %}>200</option>
+      </select>
+    </div>
+    <div class="flex space-x-2">
+      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm">Filter</button>
+      <a href="/dashboard/chats" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-1.5 rounded text-sm">Reset</a>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white shadow rounded overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+      <tr>
+        <th class="px-3 py-3 text-left">Chat ID</th>
+        <th class="px-3 py-3 text-left">User</th>
+        <th class="px-3 py-3 text-left">Model</th>
+        <th class="px-3 py-3 text-right">Turns</th>
+        <th class="px-3 py-3 text-right">Tokens (in / out)</th>
+        <th class="px-3 py-3 text-right">Cache (r / w)</th>
+        <th class="px-3 py-3 text-right">Cost</th>
+        <th class="px-3 py-3 text-right">Errors</th>
+        <th class="px-3 py-3 text-left">Last Activity</th>
+        <th class="px-3 py-3"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for c in chat_rows %}
+      <tr class="hover:bg-gray-50">
+        <td class="px-3 py-2 font-mono text-xs text-gray-800 break-all">{{ c.chat_id }}</td>
+        <td class="px-3 py-2 text-gray-700 text-xs">{{ c.user_email or "—" }}</td>
+        <td class="px-3 py-2 text-gray-600 text-xs">{{ c.model or "—" }}</td>
+        <td class="px-3 py-2 text-right text-gray-700 text-xs">{{ c.turn_count }}</td>
+        <td class="px-3 py-2 text-right text-gray-600 text-xs whitespace-nowrap">
+          {{ c.total_tokens_in }} / {{ c.total_tokens_out }}
+        </td>
+        <td class="px-3 py-2 text-right text-gray-600 text-xs whitespace-nowrap">
+          {{ c.total_cache_read }} / {{ c.total_cache_write }}
+        </td>
+        <td class="px-3 py-2 text-right text-gray-700 text-xs">
+          {% if c.total_cost %}${{ "%.6f"|format(c.total_cost|float) }}{% else %}—{% endif %}
+        </td>
+        <td class="px-3 py-2 text-right text-xs">
+          {% if c.error_count and c.error_count > 0 %}
+            <span class="text-red-600">{{ c.error_count }}</span>
+          {% else %}
+            <span class="text-gray-400">0</span>
+          {% endif %}
+        </td>
+        <td class="px-3 py-2 text-gray-500 text-xs whitespace-nowrap">
+          {{ c.last_at | relative_time }}
+        </td>
+        <td class="px-3 py-2 text-right">
+          <a href="/dashboard/chats/{{ c.chat_id }}" class="text-blue-600 hover:underline text-xs">View</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="10" class="px-4 py-8 text-center text-gray-400">No chats found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% set base_url = "/dashboard/chats" %}
+{% include "partials/pagination.html" %}
+{% endblock %}

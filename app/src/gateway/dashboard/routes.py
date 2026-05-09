@@ -856,6 +856,22 @@ async def models_create(
         except Exception:
             output_per_mtoken = None
 
+    cache_read_str = str(form.get("cache_read_per_mtoken", "")).strip()
+    cache_read_per_mtoken: Decimal | None = None
+    if cache_read_str:
+        try:
+            cache_read_per_mtoken = Decimal(cache_read_str)
+        except Exception:
+            cache_read_per_mtoken = None
+
+    cache_write_str = str(form.get("cache_write_per_mtoken", "")).strip()
+    cache_write_per_mtoken: Decimal | None = None
+    if cache_write_str:
+        try:
+            cache_write_per_mtoken = Decimal(cache_write_str)
+        except Exception:
+            cache_write_per_mtoken = None
+
     notes = str(form.get("notes", "")).strip() or None
 
     async with request.app.state.db_session_factory() as session:
@@ -864,6 +880,8 @@ async def models_create(
             endpoint_kind=endpoint_kind,
             input_per_mtoken=input_per_mtoken,
             output_per_mtoken=output_per_mtoken,
+            cache_read_per_mtoken=cache_read_per_mtoken,
+            cache_write_per_mtoken=cache_write_per_mtoken,
             is_allowed=is_allowed,
             notes=notes,
         )
@@ -958,6 +976,22 @@ async def models_update(
         except Exception:
             output_per_mtoken = None
 
+    cache_read_str = str(form.get("cache_read_per_mtoken", "")).strip()
+    cache_read_per_mtoken: Decimal | None = None
+    if cache_read_str:
+        try:
+            cache_read_per_mtoken = Decimal(cache_read_str)
+        except Exception:
+            cache_read_per_mtoken = None
+
+    cache_write_str = str(form.get("cache_write_per_mtoken", "")).strip()
+    cache_write_per_mtoken: Decimal | None = None
+    if cache_write_str:
+        try:
+            cache_write_per_mtoken = Decimal(cache_write_str)
+        except Exception:
+            cache_write_per_mtoken = None
+
     notes = str(form.get("notes", "")).strip() or None
     now = _dt.datetime.now(tz=_dt.timezone.utc)
 
@@ -969,6 +1003,8 @@ async def models_update(
                 endpoint_kind=endpoint_kind,
                 input_per_mtoken=input_per_mtoken,
                 output_per_mtoken=output_per_mtoken,
+                cache_read_per_mtoken=cache_read_per_mtoken,
+                cache_write_per_mtoken=cache_write_per_mtoken,
                 is_allowed=is_allowed,
                 notes=notes,
                 updated_at=now,
@@ -1120,6 +1156,353 @@ async def log_detail(
         "req_body_str": req_body_str,
     })
     return request.app.state.templates.TemplateResponse(request, "logs/detail.html", ctx)
+
+
+# ===========================================================================
+# Chats — group request_log rows by chat_id and show conversation turns
+# ===========================================================================
+
+
+def _extract_assistant_text(response_body: str | None) -> str:
+    """Extract concatenated assistant text from an Anthropic SSE body.
+
+    The streaming response body stored in ``request_log.response_body`` is
+    the raw SSE byte stream as the gateway saw it (truncated to
+    ``MAX_BODY_BYTES``). Each ``content_block_delta`` event carries a
+    JSON payload with ``delta.type == "text_delta"`` and a ``text`` field;
+    concatenating those deltas in order yields the assistant message.
+
+    Non-streaming responses store the full JSON body, in which case the
+    body has top-level ``content`` blocks. We try the SSE path first and
+    fall back to JSON parsing if no deltas are found.
+
+    Returns the empty string when no text could be extracted (the chat
+    detail view falls back to showing the raw body in that case).
+    """
+    if not response_body:
+        return ""
+
+    # SSE path — fast scan for ``"text_delta"`` events.
+    pieces: list[str] = []
+    if '"text_delta"' in response_body or '"delta"' in response_body:
+        for line in response_body.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if not payload or payload == "[DONE]":
+                continue
+            try:
+                obj = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            delta = obj.get("delta")
+            if isinstance(delta, dict):
+                if delta.get("type") == "text_delta":
+                    text_part = delta.get("text")
+                    if isinstance(text_part, str):
+                        pieces.append(text_part)
+                # ``thinking_delta`` / ``input_json_delta`` are skipped —
+                # the chat view shows assistant output, not internal
+                # reasoning or tool args.
+        if pieces:
+            return "".join(pieces)
+
+    # Non-streaming JSON fallback.
+    stripped = response_body.lstrip()
+    if stripped.startswith("{"):
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            return ""
+        if isinstance(obj, dict):
+            content = obj.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if (
+                        isinstance(block, dict)
+                        and block.get("type") == "text"
+                        and isinstance(block.get("text"), str)
+                    ):
+                        pieces.append(block["text"])
+            return "".join(pieces)
+
+    return ""
+
+
+def _summarize_user_prompt(request_body: dict | None) -> str:
+    """Return the last user message in ``request_body.messages`` as text.
+
+    The chat list page wants a short preview of what the user said on
+    each turn; we pull the last entry whose role is ``user`` and flatten
+    its content blocks to a string. Returns the empty string when there
+    is no user message (e.g. system-only seeding).
+    """
+    if not isinstance(request_body, dict):
+        return ""
+    messages = request_body.get("messages")
+    if not isinstance(messages, list):
+        return ""
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    text_part = block.get("text")
+                    if isinstance(text_part, str):
+                        parts.append(text_part)
+                elif block.get("type") == "tool_result":
+                    parts.append("[tool_result]")
+            return "\n".join(parts)
+    return ""
+
+
+@router.get("/chats")
+async def chats_list(
+    request: Request,
+    page: int = 1,
+    size: int = _PAGE_SIZE_DEFAULT,
+    user: str = "",
+    model: str = "",
+    from_: str = "",
+    to: str = "",
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """List chats — one row per ``chat_id`` with aggregate stats.
+
+    The grouping is done in SQL because rolling it up in Python would
+    pull every request_log row across the result window into memory
+    just to bucket them. We sort by the chat's most recent turn
+    (``MAX(created_at) DESC``) so active conversations float to the top.
+    """
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+    size = min(size, _PAGE_SIZE_MAX)
+
+    conditions = ["rl.chat_id IS NOT NULL"]
+    params: dict[str, Any] = {}
+
+    if user:
+        conditions.append(
+            "rl.user_id IN (SELECT id FROM users WHERE email ILIKE :user_filter)"
+        )
+        params["user_filter"] = f"%{user}%"
+
+    if model:
+        conditions.append("rl.model ILIKE :model_filter")
+        params["model_filter"] = f"%{model}%"
+
+    if from_:
+        try:
+            params["from_filter"] = _dt.datetime.fromisoformat(from_)
+            conditions.append("rl.created_at >= :from_filter")
+        except ValueError:
+            pass
+
+    if to:
+        try:
+            params["to_filter"] = _dt.datetime.fromisoformat(to)
+            conditions.append("rl.created_at <= :to_filter")
+        except ValueError:
+            pass
+
+    where_clause = "WHERE " + " AND ".join(conditions)
+
+    async with request.app.state.db_session_factory() as session:
+        count_result = await session.execute(
+            text(
+                f"""
+                SELECT COUNT(*) FROM (
+                    SELECT rl.chat_id FROM request_log rl
+                    {where_clause}
+                    GROUP BY rl.chat_id
+                ) t
+                """
+            ),
+            params,
+        )
+        total = int(count_result.scalar_one())
+
+        pg = _paginate(total, page, size)
+
+        rows_result = await session.execute(
+            text(
+                f"""
+                SELECT
+                    rl.chat_id,
+                    COUNT(*) AS turn_count,
+                    MIN(rl.created_at) AS first_at,
+                    MAX(rl.created_at) AS last_at,
+                    COALESCE(SUM(rl.cost_usd), 0) AS total_cost,
+                    COALESCE(SUM(rl.tokens_in), 0) AS total_tokens_in,
+                    COALESCE(SUM(rl.tokens_out), 0) AS total_tokens_out,
+                    COALESCE(SUM(rl.cache_read_tokens), 0) AS total_cache_read,
+                    COALESCE(SUM(rl.cache_write_tokens), 0) AS total_cache_write,
+                    (ARRAY_AGG(DISTINCT rl.model) FILTER (WHERE rl.model IS NOT NULL))[1] AS model,
+                    (ARRAY_AGG(DISTINCT rl.user_id) FILTER (WHERE rl.user_id IS NOT NULL))[1] AS user_id,
+                    (
+                        SELECT u.email FROM users u
+                        WHERE u.id = (
+                            ARRAY_AGG(DISTINCT rl.user_id) FILTER (WHERE rl.user_id IS NOT NULL)
+                        )[1]
+                    ) AS user_email,
+                    SUM(CASE WHEN rl.status_code >= 400 THEN 1 ELSE 0 END) AS error_count
+                FROM request_log rl
+                {where_clause}
+                GROUP BY rl.chat_id
+                ORDER BY MAX(rl.created_at) DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            {**params, "limit": pg["size"], "offset": pg["offset"]},
+        )
+        chat_rows = rows_result.mappings().all()
+
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "chat_rows": chat_rows,
+        "filters": {
+            "user": user,
+            "model": model,
+            "from_": from_,
+            "to": to,
+        },
+        **pg,
+    })
+    return request.app.state.templates.TemplateResponse(request, "chats/list.html", ctx)
+
+
+@router.get("/chats/{chat_id}")
+async def chat_detail(
+    request: Request,
+    chat_id: str,
+    turn: int | None = None,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Show every turn of one chat as a conversation transcript.
+
+    Each ``request_log`` row in the chat is a turn. The active turn
+    (selected via ``?turn=<id>`` or the most recent by default) renders
+    its full prompt + response, while the sidebar lists all turns with
+    relative timestamps and quick stats. The shape mirrors the
+    ``log-viewer`` reference under ``D:\\office_work\\ai\\log-viewer``.
+    """
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    async with request.app.state.db_session_factory() as session:
+        rows_result = await session.execute(
+            select(RequestLog)
+            .where(RequestLog.chat_id == chat_id)
+            .order_by(RequestLog.created_at.asc())
+        )
+        turns = list(rows_result.scalars().all())
+
+        if not turns:
+            return _redirect(
+                "/dashboard/chats",
+                flash_msg=f"No turns recorded for chat {chat_id}.",
+                flash_kind="error",
+                secret=secret,
+            )
+
+        # Resolve the selected turn. ``turn`` is the row's BIGSERIAL id,
+        # not its index — that way deep-links survive insertions of
+        # newer rows ahead of the currently-selected one.
+        active_turn = turns[-1]
+        if turn is not None:
+            for t in turns:
+                if t.id == turn:
+                    active_turn = t
+                    break
+
+        # User context — every turn in a chat shares the same user, but
+        # tolerate divergence (e.g. an admin replaying a chat) by reading
+        # off the active turn.
+        chat_user: User | None = None
+        if active_turn.user_id is not None:
+            chat_user = await session.get(User, active_turn.user_id)
+
+    # Build per-turn metadata for the sidebar without re-querying.
+    turn_summaries: list[dict[str, Any]] = []
+    total_cost = Decimal(0)
+    total_tokens_in = 0
+    total_tokens_out = 0
+    total_cache_read = 0
+    total_cache_write = 0
+    for t in turns:
+        total_cost += t.cost_usd or Decimal(0)
+        total_tokens_in += t.tokens_in or 0
+        total_tokens_out += t.tokens_out or 0
+        total_cache_read += t.cache_read_tokens or 0
+        total_cache_write += t.cache_write_tokens or 0
+        turn_summaries.append({
+            "id": t.id,
+            "request_id": str(t.request_id),
+            "created_at": t.created_at,
+            "latency_ms": t.latency_ms,
+            "status_code": t.status_code,
+            "error_code": t.error_code,
+            "model": t.model,
+            "tokens_in": t.tokens_in,
+            "tokens_out": t.tokens_out,
+            "cache_read_tokens": t.cache_read_tokens,
+            "cache_write_tokens": t.cache_write_tokens,
+            "cost_usd": t.cost_usd,
+            "preview": (_summarize_user_prompt(t.request_body) or "")[:120],
+            "is_active": t.id == active_turn.id,
+        })
+
+    # Render the active turn's prompt list + assistant text.
+    request_body = active_turn.request_body or {}
+    raw_messages = (
+        request_body.get("messages") if isinstance(request_body, dict) else None
+    )
+    if not isinstance(raw_messages, list):
+        raw_messages = []
+
+    system_prompt: str | list[Any] | None = None
+    if isinstance(request_body, dict):
+        system_prompt = request_body.get("system")
+
+    assistant_text = _extract_assistant_text(active_turn.response_body)
+
+    try:
+        request_body_pretty = json.dumps(active_turn.request_body, indent=2) if active_turn.request_body else ""
+    except Exception:
+        request_body_pretty = str(active_turn.request_body or "")
+
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "chat_id": chat_id,
+        "chat_user": chat_user,
+        "turns": turn_summaries,
+        "active_turn": active_turn,
+        "active_messages": raw_messages,
+        "active_system_prompt": system_prompt,
+        "active_assistant_text": assistant_text,
+        "active_request_body_pretty": request_body_pretty,
+        "totals": {
+            "cost_usd": total_cost,
+            "tokens_in": total_tokens_in,
+            "tokens_out": total_tokens_out,
+            "cache_read_tokens": total_cache_read,
+            "cache_write_tokens": total_cache_write,
+            "turn_count": len(turns),
+        },
+    })
+    return request.app.state.templates.TemplateResponse(request, "chats/detail.html", ctx)
 
 
 # ===========================================================================
