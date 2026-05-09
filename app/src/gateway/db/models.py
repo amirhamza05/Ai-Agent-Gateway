@@ -366,6 +366,31 @@ class DashboardSession(Base):
     )
 
 
+class GatewaySettings(Base):
+    """Admin-configurable credentials managed from the dashboard settings page.
+
+    One row per key. Supported keys: ``openrouter_api_key``, ``qdrant_url``,
+    ``qdrant_api_key``. A missing row means "fall back to the env var".
+    Values are stored as plaintext — the DB is on the same machine as
+    the ``.env`` file, so no additional exposure is introduced.
+    """
+
+    __tablename__ = "gateway_settings"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_by_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
 class ModelPricing(Base):
     """Per-model pricing + allow-list, owned by the dashboard.
 
