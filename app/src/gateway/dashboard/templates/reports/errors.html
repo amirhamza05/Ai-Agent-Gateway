@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Error Report — GeoSWMM Admin{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-800 mb-2">Error Rate</h1>
+
+<div class="flex items-center space-x-2 mb-6">
+  <span class="text-sm text-gray-500">Range:</span>
+  <a href="?range=24h" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '7d') == '24h' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">24h</a>
+  <a href="?range=7d" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '7d') == '7d' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">7d</a>
+  <a href="?range=30d" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '7d') == '30d' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">30d</a>
+</div>
+
+<div class="bg-white shadow rounded p-6 mb-4">
+  <canvas id="errorsChart" height="80"></canvas>
+</div>
+
+<div id="errorsTable" class="bg-white shadow rounded overflow-hidden"></div>
+
+<script>
+const range = new URLSearchParams(location.search).get('range') || '7d';
+(async () => {
+  const resp = await fetch(`/dashboard/reports/errors.json?window=${range}`);
+  const data = await resp.json();
+
+  // Aggregate by bucket
+  const buckets = {};
+  for (const d of data) {
+    if (!buckets[d.bucket]) buckets[d.bucket] = { errors: 0, total: 0 };
+    buckets[d.bucket].errors += d.errors;
+    buckets[d.bucket].total += d.total;
+  }
+  const labels = Object.keys(buckets).sort();
+  const errVals = labels.map(l => buckets[l].errors);
+  const totalVals = labels.map(l => buckets[l].total);
+
+  const ctx = document.getElementById('errorsChart');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels.map(l => l.substring(0, 16)),
+      datasets: [
+        {
+          label: 'Errors',
+          data: errVals,
+          borderColor: 'rgb(239, 68, 68)',
+          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+          fill: true,
+          tension: 0.3,
+        },
+        {
+          label: 'Total',
+          data: totalVals,
+          borderColor: 'rgb(59, 130, 246)',
+          backgroundColor: 'rgba(59, 130, 246, 0.05)',
+          fill: true,
+          tension: 0.3,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      scales: { y: { beginAtZero: true } }
+    }
+  });
+
+  if (data.length > 0) {
+    const rows = data.map(d =>
+      `<tr class="hover:bg-gray-50 border-b border-gray-100">
+        <td class="px-4 py-2 text-sm text-gray-600">${d.bucket.substring(0, 16)}</td>
+        <td class="px-4 py-2 text-sm text-right text-red-600">${d.errors}</td>
+        <td class="px-4 py-2 text-sm text-right text-gray-700">${d.total}</td>
+        <td class="px-4 py-2 text-sm text-gray-500">${d.error_code || "—"}</td>
+      </tr>`
+    ).join('');
+    document.getElementById('errorsTable').innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+          <tr>
+            <th class="px-4 py-2 text-left">Bucket</th>
+            <th class="px-4 py-2 text-right">Errors</th>
+            <th class="px-4 py-2 text-right">Total</th>
+            <th class="px-4 py-2 text-left">Error Code</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+})();
+</script>
+{% endblock %}

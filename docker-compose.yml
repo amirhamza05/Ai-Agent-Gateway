@@ -1,0 +1,108 @@
+# GeoSWMM Gateway — Phase 1 skeleton compose
+#
+# Brings up Caddy (TLS termination), the FastAPI app, Postgres, and Redis.
+# In dev the `app` service is reachable on the host at :8000 directly so you
+# don't need Caddy locally. In prod, Caddy fronts everything on 80/443 and
+# you can drop the `ports:` block from `app` if you want it private.
+#
+# Postgres and Redis are intentionally NOT exposed to the host — they are
+# reachable only on the internal compose network. If you need to poke them
+# from your laptop, use `docker compose exec`.
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Caddyfile reads {$PUBLIC_HOSTNAME:localhost}; falls back to localhost
+      # when the variable is unset, so dev still works without TLS.
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    # Expose 8000 to the host for local dev so you can curl
+    # http://localhost:8000/healthz without going through Caddy. In prod you
+    # can comment this out to keep the app private behind Caddy.
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gateway
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Tuning per §11 of the plan: small VPS (4 vCPU / 4 GB / 20 GB) so we cap
+    # shared_buffers at 512MB and connections at 50 to leave headroom for the
+    # app and Redis containers.
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c effective_cache_size=1GB
+      -c work_mem=16MB
+      -c max_connections=50
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 200m
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}
+  pgdata: {}
+  redisdata: {}

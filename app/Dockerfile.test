@@ -1,0 +1,17 @@
+# One-shot test image: adds dev deps on top of the runtime image so we can
+# run pytest without polluting the production image with pytest/respx/etc.
+# Build: docker build -f app/Dockerfile.test -t gateway-app-test app
+FROM gateway-app
+
+USER root
+
+# ensurepip bootstraps pip into the uv-built venv (uv venvs ship without pip).
+RUN /app/.venv/bin/python -m ensurepip --upgrade \
+    && /app/.venv/bin/python -m pip install --quiet --no-cache-dir \
+        pytest \
+        pytest-asyncio \
+        respx \
+        freezegun
+
+# Tests run as root so they can mount/own /tmp for caches.
+WORKDIR /app

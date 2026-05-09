@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}New API Token — GeoSWMM Admin{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto">
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-800">API Token Created</h1>
+    <p class="text-sm text-gray-500 mt-1">Copy this token now — it will not be shown again.</p>
+  </div>
+
+  <div class="bg-yellow-50 border border-yellow-300 rounded p-4 mb-6">
+    <div class="flex items-start space-x-3">
+      <svg class="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+      </svg>
+      <p class="text-sm text-yellow-800">
+        This is the only time the raw token is displayed. Once you leave this page it cannot be recovered.
+        Store it in a secure location (e.g. the ArcPy add-in settings).
+      </p>
+    </div>
+  </div>
+
+  <div class="bg-white shadow rounded p-5 mb-6">
+    <dl class="space-y-3 text-sm">
+      <div>
+        <dt class="text-gray-500 text-xs uppercase tracking-wide mb-1">Description</dt>
+        <dd class="text-gray-800 font-medium">{{ description }}</dd>
+      </div>
+      <div>
+        <dt class="text-gray-500 text-xs uppercase tracking-wide mb-1">Author</dt>
+        <dd class="text-gray-800">{{ author }}</dd>
+      </div>
+      <div>
+        <dt class="text-gray-500 text-xs uppercase tracking-wide mb-1">Token</dt>
+        <dd>
+          <div class="flex items-center space-x-2">
+            <code id="raw-token"
+                  class="flex-1 font-mono text-xs bg-gray-100 rounded px-3 py-2 break-all select-all text-gray-900">{{ raw_token }}</code>
+            <button onclick="copyToken()"
+                    class="flex-shrink-0 bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-2 rounded text-xs">
+              Copy
+            </button>
+          </div>
+        </dd>
+      </div>
+    </dl>
+  </div>
+
+  <div class="bg-gray-50 rounded p-4 mb-6 text-sm text-gray-600">
+    <p class="font-medium mb-1">How to use in ArcPy / the add-in:</p>
+    <ol class="list-decimal list-inside space-y-1 text-xs">
+      <li>Paste the token into the add-in's token field.</li>
+      <li>On first connect, the gateway locks the token to your PC automatically.</li>
+      <li>Subsequent connects from the same PC work without re-entering the token.</li>
+      <li>A connect attempt from a different PC returns <code class="bg-gray-200 px-1 rounded">403 machine_locked</code>.</li>
+    </ol>
+  </div>
+
+  <a href="/dashboard/users/{{ target_user_id }}"
+     class="inline-block bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded text-sm">
+    Back to User
+  </a>
+</div>
+
+<script>
+function copyToken() {
+  const el = document.getElementById('raw-token');
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+    const btn = event.target;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 2000);
+  });
+}
+</script>
+{% endblock %}

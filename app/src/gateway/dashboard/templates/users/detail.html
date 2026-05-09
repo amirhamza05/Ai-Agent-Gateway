@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}User {{ target_user.email }} — GeoSWMM Admin{% endblock %}
+{% block content %}
+<div class="mb-6 flex items-center justify-between">
+  <div>
+    <h1 class="text-2xl font-bold text-gray-800">{{ target_user.email }}</h1>
+    <div class="flex items-center space-x-2 mt-1">
+      {% if target_user.is_admin %}
+        <span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs font-medium">Admin</span>
+      {% endif %}
+      {% if target_user.is_active %}
+        <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-medium">Active</span>
+      {% else %}
+        <span class="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-medium">Inactive</span>
+      {% endif %}
+    </div>
+  </div>
+  <a href="/dashboard/users" class="text-sm text-gray-500 hover:text-gray-700">Back to Users</a>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+  <div class="bg-white shadow rounded p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Monthly Spend</div>
+    <div class="text-xl font-bold text-gray-800">${{ "%.4f"|format(spent_usd) }}</div>
+    {% if target_user.monthly_usd_cap and target_user.monthly_usd_cap > 0 %}
+      <div class="text-xs text-gray-400">of ${{ "%.2f"|format(target_user.monthly_usd_cap|float) }} cap</div>
+    {% else %}
+      <div class="text-xs text-gray-400">no cap</div>
+    {% endif %}
+  </div>
+  <div class="bg-white shadow rounded p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Total Requests</div>
+    <div class="text-xl font-bold text-gray-800">{{ request_count }}</div>
+  </div>
+  <div class="bg-white shadow rounded p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Member Since</div>
+    <div class="text-sm font-medium text-gray-800">{{ target_user.created_at | fmt_date }}</div>
+    <div class="text-xs text-gray-400">{{ target_user.created_at | relative_time }}</div>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+  <!-- Cap update -->
+  <div class="bg-white shadow rounded p-5">
+    <h2 class="text-base font-semibold text-gray-700 mb-3">Update Monthly Cap</h2>
+    <form method="post" action="/dashboard/users/{{ target_user.id }}/cap" class="flex items-end space-x-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="flex-1">
+        <label class="block text-xs text-gray-500 mb-1" for="cap">USD / month (0 = unlimited)</label>
+        <input type="number" id="cap" name="monthly_usd_cap"
+               value="{{ target_user.monthly_usd_cap|float }}"
+               min="0" step="0.01"
+               class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+      </div>
+      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
+        Update
+      </button>
+    </form>
+  </div>
+
+  <!-- Admin toggle -->
+  <div class="bg-white shadow rounded p-5">
+    <h2 class="text-base font-semibold text-gray-700 mb-3">Admin Access</h2>
+    <p class="text-sm text-gray-600 mb-3">
+      Currently: <strong>{{ "Admin" if target_user.is_admin else "Not admin" }}</strong>
+    </p>
+    <form method="post" action="/dashboard/users/{{ target_user.id }}/admin">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit"
+              class="{% if target_user.is_admin %}bg-yellow-500 hover:bg-yellow-600{% else %}bg-purple-600 hover:bg-purple-700{% endif %} text-white px-4 py-2 rounded text-sm">
+        {{ "Remove Admin" if target_user.is_admin else "Grant Admin" }}
+      </button>
+    </form>
+  </div>
+
+  <!-- Regenerate tokens -->
+  <div class="bg-white shadow rounded p-5">
+    <h2 class="text-base font-semibold text-gray-700 mb-1">Regenerate Tokens</h2>
+    <p class="text-sm text-gray-500 mb-3">Revokes all existing refresh tokens and issues a fresh pair. The new tokens are shown once.</p>
+    <form method="post" action="/dashboard/users/{{ target_user.id }}/regenerate">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm">
+        Regenerate
+      </button>
+    </form>
+  </div>
+
+  <!-- Deactivate -->
+  {% if target_user.is_active %}
+  <div class="bg-white shadow rounded p-5 border border-red-100">
+    <h2 class="text-base font-semibold text-red-700 mb-1">Deactivate User</h2>
+    <p class="text-sm text-gray-500 mb-3">Prevents login and API access. Revokes all sessions and refresh tokens.</p>
+    <form method="post" action="/dashboard/users/{{ target_user.id }}/deactivate"
+          onsubmit="return confirm('Deactivate this user? They will lose all access immediately.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded text-sm">
+        Deactivate
+      </button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+
+<!-- API Tokens -->
+<div class="bg-white shadow rounded overflow-hidden mb-6">
+  <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+    <h2 class="text-base font-semibold text-gray-700">API Tokens</h2>
+  </div>
+
+  {% if api_tokens %}
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 text-gray-500 text-xs uppercase">
+      <tr>
+        <th class="px-4 py-2 text-left">Description</th>
+        <th class="px-4 py-2 text-left">Author</th>
+        <th class="px-4 py-2 text-left">Locked PC</th>
+        <th class="px-4 py-2 text-left">Status</th>
+        <th class="px-4 py-2 text-left">Last Used</th>
+        <th class="px-4 py-2 text-left">Created</th>
+        <th class="px-4 py-2"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-50">
+      {% for tok in api_tokens %}
+      <tr class="hover:bg-gray-50">
+        <td class="px-4 py-2 text-gray-800 font-medium">{{ tok.description }}</td>
+        <td class="px-4 py-2 text-gray-600">{{ tok.author }}</td>
+        <td class="px-4 py-2 text-gray-500 font-mono text-xs">
+          {% if tok.machine_fingerprint %}
+            <span title="{{ tok.machine_fingerprint }}">{{ tok.machine_fingerprint[:24] }}{% if tok.machine_fingerprint|length > 24 %}…{% endif %}</span>
+          {% else %}
+            <span class="text-gray-400 italic">not yet bound</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-2">
+          {% if tok.is_active %}
+            <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">Active</span>
+          {% else %}
+            <span class="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs">Revoked</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-2 text-gray-500 text-xs">{{ tok.last_used_at | relative_time if tok.last_used_at else "never" }}</td>
+        <td class="px-4 py-2 text-gray-500 text-xs">{{ tok.created_at | relative_time }}</td>
+        <td class="px-4 py-2 text-right">
+          {% if tok.is_active %}
+          <form method="post" action="/dashboard/users/{{ target_user.id }}/tokens/{{ tok.id }}/revoke"
+                onsubmit="return confirm('Revoke this token? The add-in will lose access immediately.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="text-xs text-red-600 hover:underline">Revoke</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="px-4 py-4 text-sm text-gray-400">No API tokens yet.</p>
+  {% endif %}
+
+  <!-- Create new token -->
+  <div class="px-4 py-4 border-t border-gray-100 bg-gray-50">
+    <h3 class="text-sm font-semibold text-gray-700 mb-2">Create New API Token</h3>
+    <form method="post" action="/dashboard/users/{{ target_user.id }}/tokens"
+          class="flex flex-wrap items-end gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Description</label>
+        <input type="text" name="description" placeholder="e.g. Office laptop — ArcPro"
+               required maxlength="255"
+               class="border border-gray-300 rounded px-3 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-blue-400">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Author</label>
+        <input type="text" name="author" placeholder="e.g. John Smith"
+               required maxlength="255"
+               class="border border-gray-300 rounded px-3 py-2 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-400">
+      </div>
+      <button type="submit"
+              class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
+        Create Token
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Recent requests -->
+{% if recent_logs %}
+<div class="bg-white shadow rounded overflow-hidden">
+  <div class="px-4 py-3 border-b border-gray-100">
+    <h2 class="text-base font-semibold text-gray-700">Recent Requests (last 20)</h2>
+  </div>
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 text-gray-500 text-xs uppercase">
+      <tr>
+        <th class="px-4 py-2 text-left">Time</th>
+        <th class="px-4 py-2 text-left">Endpoint</th>
+        <th class="px-4 py-2 text-left">Model</th>
+        <th class="px-4 py-2 text-right">Status</th>
+        <th class="px-4 py-2 text-right">Cost</th>
+        <th class="px-4 py-2"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-50">
+      {% for log in recent_logs %}
+      <tr class="hover:bg-gray-50">
+        <td class="px-4 py-2 text-gray-500 text-xs">{{ log.created_at | relative_time }}</td>
+        <td class="px-4 py-2 text-gray-700">{{ log.endpoint }}</td>
+        <td class="px-4 py-2 text-gray-600 text-xs">{{ log.model or "—" }}</td>
+        <td class="px-4 py-2 text-right">
+          <span class="{% if log.status_code and log.status_code >= 400 %}text-red-600{% else %}text-gray-700{% endif %}">
+            {{ log.status_code or "—" }}
+          </span>
+        </td>
+        <td class="px-4 py-2 text-right text-gray-600 text-xs">
+          {% if log.cost_usd %}${{ "%.6f"|format(log.cost_usd|float) }}{% else %}—{% endif %}
+        </td>
+        <td class="px-4 py-2 text-right">
+          <a href="/dashboard/logs/{{ log.id }}" class="text-blue-600 hover:underline text-xs">View</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="bg-white shadow rounded p-8 text-center text-gray-400">
+  No request log entries for this user yet.
+</div>
+{% endif %}
+{% endblock %}

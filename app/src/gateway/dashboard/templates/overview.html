@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Overview — GeoSWMM Admin{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-800 mb-6">Overview</h1>
+
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+  <div class="bg-white shadow rounded p-5">
+    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Today's Cost</div>
+    <div class="text-2xl font-bold text-gray-800">${{ "%.4f"|format(today_cost) }}</div>
+  </div>
+  <div class="bg-white shadow rounded p-5">
+    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Today's Requests</div>
+    <div class="text-2xl font-bold text-gray-800">{{ today_requests }}</div>
+  </div>
+  <div class="bg-white shadow rounded p-5">
+    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Error Rate (today)</div>
+    <div class="text-2xl font-bold {% if today_error_rate > 5 %}text-red-600{% else %}text-gray-800{% endif %}">
+      {{ today_error_rate }}%
+    </div>
+  </div>
+  <div class="bg-white shadow rounded p-5">
+    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Top Model</div>
+    <div class="text-base font-bold text-gray-800 truncate">{{ top_model }}</div>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+  <div class="bg-white shadow rounded p-5">
+    <div class="text-sm font-medium text-gray-700 mb-4">Cost over last 7 days</div>
+    <canvas id="costChart" height="120"></canvas>
+  </div>
+  <div class="bg-white shadow rounded p-5">
+    <div class="text-sm font-medium text-gray-700 mb-1">Total Users</div>
+    <div class="text-3xl font-bold text-gray-800">{{ user_count }}</div>
+    <a href="/dashboard/users" class="text-sm text-blue-600 hover:underline mt-2 inline-block">Manage users</a>
+  </div>
+</div>
+
+<script>
+(async () => {
+  const resp = await fetch('/dashboard/reports/cost.json?window=7d');
+  const data = await resp.json();
+  const ctx = document.getElementById('costChart');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(d => d.day.substring(0, 10)),
+      datasets: [{
+        label: 'Cost USD',
+        data: data.map(d => d.cost_usd),
+        borderColor: 'rgb(37, 99, 235)',
+        backgroundColor: 'rgba(37, 99, 235, 0.1)',
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true } }
+    }
+  });
+})();
+</script>
+{% endblock %}

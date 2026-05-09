@@ -1,0 +1,9 @@
+# Lightweight rebuild: extend the existing runtime image and overlay
+# updated source + migrations without going through the full builder stage.
+# Use only when ghcr.io is unreachable and the venv hasn't changed.
+FROM gateway-app:latest
+
+USER root
+COPY --chown=gateway:gateway src /app/src
+COPY --chown=gateway:gateway migrations /app/migrations
+USER gateway

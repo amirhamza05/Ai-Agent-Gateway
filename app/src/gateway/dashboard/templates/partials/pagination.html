@@ -1,0 +1,28 @@
+{% if total_pages > 1 %}
+<div class="flex items-center justify-center space-x-2 mt-4">
+  {% if page > 1 %}
+    <a href="{{ base_url }}?page={{ page - 1 }}&size={{ size }}"
+       class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">Prev</a>
+  {% else %}
+    <span class="px-3 py-1 bg-gray-100 text-gray-400 rounded text-sm">Prev</span>
+  {% endif %}
+
+  {% for p in range([1, page - 2]|max, [total_pages + 1, page + 3]|min) %}
+    {% if p == page %}
+      <span class="px-3 py-1 bg-blue-600 text-white rounded text-sm">{{ p }}</span>
+    {% else %}
+      <a href="{{ base_url }}?page={{ p }}&size={{ size }}"
+         class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">{{ p }}</a>
+    {% endif %}
+  {% endfor %}
+
+  {% if page < total_pages %}
+    <a href="{{ base_url }}?page={{ page + 1 }}&size={{ size }}"
+       class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">Next</a>
+  {% else %}
+    <span class="px-3 py-1 bg-gray-100 text-gray-400 rounded text-sm">Next</span>
+  {% endif %}
+
+  <span class="text-sm text-gray-500">{{ total }} total</span>
+</div>
+{% endif %}

@@ -1,0 +1,124 @@
+[project]
+name = "gateway"
+version = "0.1.0"
+description = "GeoSWMM Gateway — FastAPI proxy for OpenRouter and Qdrant."
+requires-python = ">=3.12,<3.13"
+license = { text = "Proprietary" }
+authors = [
+    { name = "GeoSWMM Gateway maintainers" },
+]
+
+# Phase 2 scope. P2 adds argon2-cffi + PyJWT + email-validator. P3 adds
+# tenacity, etc. Pin lower bounds; upper bounds are deliberately loose so
+# `uv lock` decides.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "structlog>=24.4",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "redis>=5.2",
+    "httpx>=0.27",
+    # P2 — Auth
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.10",
+    "email-validator>=2.2",
+    # P-D — Admin Dashboard
+    "jinja2>=3.1",
+    "itsdangerous>=2.2",
+    "python-multipart>=0.0.12",
+    "click>=8.1",
+]
+
+[project.scripts]
+gateway-admin = "gateway.cli:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gateway"]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# Per-test loop. The migration fixture is now sync, so we don't need a
+# session-scoped loop — and per-test loops avoid pool-dispose errors
+# when async engines are torn down inside fixture finalisers.
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = [
+    "error",
+    # asyncpg closes sockets in __del__ rather than awaitable close(),
+    # which trips ResourceWarning under strict mode. Cosmetic, upstream.
+    "ignore::ResourceWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    # asyncpg's Connection._cancel coroutine fires at GC time on some
+    # paths; not user-actionable.
+    "ignore:coroutine 'Connection._cancel' was never awaited:RuntimeWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Conservative-but-useful defaults. Add rule sets one at a time when the team
+# is ready — don't enable everything on day one.
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "ASYNC",# flake8-async
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "E501",  # line length handled by formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B011", "B017"]  # asserts and pytest.raises in tests are fine
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/gateway"]
+plugins = []
+# We're loose on tests — strict on the package itself.
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# Third-party libs without stubs.
+module = ["respx.*"]
+ignore_missing_imports = true

@@ -1,0 +1,37 @@
+<nav class="bg-gray-800 text-white shadow">
+  <div class="max-w-7xl mx-auto px-4">
+    <div class="flex items-center justify-between h-14">
+      <div class="flex items-center space-x-6">
+        <span class="font-bold text-lg">GeoSWMM Admin</span>
+        <a href="/dashboard/" class="hover:text-gray-300 text-sm">Overview</a>
+        <a href="/dashboard/users" class="hover:text-gray-300 text-sm">Users</a>
+        <a href="/dashboard/models" class="hover:text-gray-300 text-sm">Models</a>
+        <a href="/dashboard/logs" class="hover:text-gray-300 text-sm">Logs</a>
+        <div class="relative group">
+          <span class="hover:text-gray-300 text-sm cursor-default">Reports</span>
+          <div class="absolute left-0 top-full pt-1 hidden group-hover:block z-10">
+            <div class="bg-gray-700 rounded shadow-lg py-1 min-w-32">
+              <a href="/dashboard/reports/cost" class="block px-4 py-2 text-sm hover:bg-gray-600">Cost</a>
+              <a href="/dashboard/reports/users" class="block px-4 py-2 text-sm hover:bg-gray-600">Users</a>
+              <a href="/dashboard/reports/errors" class="block px-4 py-2 text-sm hover:bg-gray-600">Errors</a>
+              <a href="/dashboard/reports/latency" class="block px-4 py-2 text-sm hover:bg-gray-600">Latency</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center space-x-4">
+        {% if current_admin %}
+          <span class="text-gray-400 text-sm">{{ current_admin.email }}</span>
+          <form method="post" action="/dashboard/logout">
+            {% if csrf_token is defined %}
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {% endif %}
+            <button type="submit" class="text-sm bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">
+              Logout
+            </button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</nav>

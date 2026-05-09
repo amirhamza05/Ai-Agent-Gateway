@@ -1,0 +1,17 @@
+# GeoSWMM Gateway — disk-usage alarm (per §8.3 of GatewayServerPlan.md)
+#
+# Every 15 minutes, check /var/lib/docker disk usage. When the "Use%"
+# column exceeds 80 percent, post the offending df line to the Discord
+# webhook configured in $DISCORD_WEBHOOK.
+#
+# Install via ops/install-disk-alarm.sh, which appends this line to
+# root's crontab and tests it once.
+#
+# Requires:
+#   - $DISCORD_WEBHOOK exported in the cron environment (or hard-coded
+#     by install-disk-alarm.sh after read-from-env).
+#   - curl available on the host (default on Ubuntu 24.04).
+#
+# At 80% usage you have ~4 GB headroom on a 20 GB disk to react.
+
+*/15 * * * * df /var/lib/docker | awk 'NR==2 && $5+0>80 {print $0}' | curl -s -X POST -H 'Content-Type: application/json' -d "@-" $DISCORD_WEBHOOK

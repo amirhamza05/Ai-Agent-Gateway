@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Users Report — GeoSWMM Admin{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-800 mb-2">Top Users by Spend</h1>
+
+<div class="flex items-center space-x-2 mb-6">
+  <span class="text-sm text-gray-500">Range:</span>
+  <a href="?range=7d" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '30d') == '7d' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">7d</a>
+  <a href="?range=30d" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '30d') == '30d' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">30d</a>
+</div>
+
+<div class="bg-white shadow rounded p-6 mb-4">
+  <canvas id="usersChart" height="80"></canvas>
+</div>
+
+<div id="usersTable" class="bg-white shadow rounded overflow-hidden"></div>
+
+<script>
+const range = new URLSearchParams(location.search).get('range') || '30d';
+(async () => {
+  const resp = await fetch(`/dashboard/reports/users.json?window=${range}`);
+  const data = await resp.json();
+
+  const top10 = data.slice(0, 10);
+  const ctx = document.getElementById('usersChart');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: top10.map(d => d.email),
+      datasets: [{
+        label: 'Spend USD',
+        data: top10.map(d => d.spent_usd),
+        backgroundColor: 'rgba(124, 58, 237, 0.7)',
+        borderColor: 'rgb(124, 58, 237)',
+        borderWidth: 1,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true, title: { display: true, text: 'USD' } } }
+    }
+  });
+
+  if (data.length > 0) {
+    const rows = data.map(d =>
+      `<tr class="hover:bg-gray-50 border-b border-gray-100">
+        <td class="px-4 py-2 text-sm text-gray-700">${d.email}</td>
+        <td class="px-4 py-2 text-sm text-right text-gray-800">$${d.spent_usd.toFixed(6)}</td>
+        <td class="px-4 py-2 text-sm text-right text-gray-600">${d.request_count}</td>
+      </tr>`
+    ).join('');
+    document.getElementById('usersTable').innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+          <tr>
+            <th class="px-4 py-2 text-left">Email</th>
+            <th class="px-4 py-2 text-right">Spent USD</th>
+            <th class="px-4 py-2 text-right">Requests</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+})();
+</script>
+{% endblock %}

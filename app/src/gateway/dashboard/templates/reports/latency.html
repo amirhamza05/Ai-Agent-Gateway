@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Latency Report — GeoSWMM Admin{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-800 mb-2">Latency Percentiles</h1>
+
+<div class="flex items-center space-x-2 mb-6">
+  <span class="text-sm text-gray-500">Range:</span>
+  <a href="?range=24h" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '24h') == '24h' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">24h</a>
+  <a href="?range=7d" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '24h') == '7d' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">7d</a>
+  <a href="?range=30d" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '24h') == '30d' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">30d</a>
+</div>
+
+<div class="bg-white shadow rounded p-6 mb-4">
+  <canvas id="latencyChart" height="80"></canvas>
+</div>
+
+<div id="latencyTable" class="bg-white shadow rounded overflow-hidden"></div>
+
+<script>
+const range = new URLSearchParams(location.search).get('range') || '24h';
+(async () => {
+  const resp = await fetch(`/dashboard/reports/latency.json?window=${range}`);
+  const data = await resp.json();
+
+  const ctx = document.getElementById('latencyChart');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(d => d.endpoint),
+      datasets: [
+        { label: 'p50', data: data.map(d => d.p50 || 0), backgroundColor: 'rgba(34,197,94,0.7)' },
+        { label: 'p95', data: data.map(d => d.p95 || 0), backgroundColor: 'rgba(251,191,36,0.7)' },
+        { label: 'p99', data: data.map(d => d.p99 || 0), backgroundColor: 'rgba(239,68,68,0.7)' },
+      ]
+    },
+    options: {
+      responsive: true,
+      scales: { y: { beginAtZero: true, title: { display: true, text: 'ms' } } }
+    }
+  });
+
+  if (data.length > 0) {
+    const rows = data.map(d =>
+      `<tr class="hover:bg-gray-50 border-b border-gray-100">
+        <td class="px-4 py-2 text-sm text-gray-700 font-mono text-xs">${d.endpoint}</td>
+        <td class="px-4 py-2 text-sm text-right text-gray-700">${d.p50 ? d.p50.toFixed(0) + ' ms' : '—'}</td>
+        <td class="px-4 py-2 text-sm text-right text-gray-700">${d.p95 ? d.p95.toFixed(0) + ' ms' : '—'}</td>
+        <td class="px-4 py-2 text-sm text-right text-gray-700">${d.p99 ? d.p99.toFixed(0) + ' ms' : '—'}</td>
+        <td class="px-4 py-2 text-sm text-right text-gray-500">${d.n}</td>
+      </tr>`
+    ).join('');
+    document.getElementById('latencyTable').innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+          <tr>
+            <th class="px-4 py-2 text-left">Endpoint</th>
+            <th class="px-4 py-2 text-right">p50</th>
+            <th class="px-4 py-2 text-right">p95</th>
+            <th class="px-4 py-2 text-right">p99</th>
+            <th class="px-4 py-2 text-right">n</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } else {
+    document.getElementById('latencyTable').innerHTML =
+      '<p class="px-4 py-8 text-center text-gray-400 text-sm">No latency data for this period.</p>';
+  }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,54 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker / build artifacts
+dist/
+build/
+*.dump
+*.sql.gz
+
+# Caddy / runtime
+caddy_data/
+caddy_config/
+pgdata/
+redisdata/
+
+# Local logs / dumps
+logs/
+*.log
+backups/
+
+# Claude local
+.claude/settings.local.json

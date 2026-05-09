@@ -1,0 +1,12 @@
+# GeoSWMM Gateway — Caddy config.
+#
+# In prod, set PUBLIC_HOSTNAME=api.your-domain.com in .env. Caddy will
+# auto-provision a Let's Encrypt cert and serve over HTTPS.
+#
+# Locally, PUBLIC_HOSTNAME is unset (or set to "localhost"), so Caddy serves
+# plain HTTP on :80 and the dev workflow normally hits the app directly on
+# :8000 anyway.
+
+{$PUBLIC_HOSTNAME:localhost} {
+    reverse_proxy app:8000
+}
