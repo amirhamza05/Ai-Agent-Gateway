@@ -68,6 +68,12 @@ async def list_models(
     for model_id, row in sorted(prices.items()):
         if not row.is_allowed:
             continue
+        # The token-scope feature only governs messages models — embeddings
+        # are always available to any authenticated caller and are not
+        # surfaced through this endpoint, which exists so an AI-agent UI
+        # can render a chat-model picker.
+        if row.endpoint_kind != "messages":
+            continue
         if not allow_all_models and (
             scoped_models is None or model_id not in scoped_models
         ):

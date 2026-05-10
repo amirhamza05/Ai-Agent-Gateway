@@ -140,8 +140,14 @@ async def _validate_model_ids(
     deduped = list(dict.fromkeys(m.strip() for m in models if m.strip()))
     if not deduped:
         return []
+    # Per-token scope only governs messages models — restrict the
+    # allow-list lookup to that endpoint kind so an embedding model
+    # (which is always callable regardless) can't be added here.
     result = await session.execute(
-        select(ModelPricing.model).where(ModelPricing.model.in_(deduped))
+        select(ModelPricing.model).where(
+            ModelPricing.model.in_(deduped),
+            ModelPricing.endpoint_kind == "messages",
+        )
     )
     known = {row[0] for row in result.all()}
     missing = [m for m in deduped if m not in known]

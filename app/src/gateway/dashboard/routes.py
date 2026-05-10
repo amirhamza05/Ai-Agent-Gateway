@@ -554,16 +554,18 @@ async def user_detail(
             for tid, model_id in scope_rows.all():
                 token_models.setdefault(tid, []).append(model_id)
 
-        # Available pricing rows for the new-token form (only active
-        # rows; disabled or non-allowed models are hidden so the admin
-        # can't accidentally scope a token to an unusable model).
+        # Available pricing rows for the new-token form. Only chat
+        # (messages) models — the per-token scope feature does not
+        # restrict embeddings, so showing embedding rows here would
+        # confuse the operator.
         pricing_result = await session.execute(
             select(ModelPricing)
             .where(
                 ModelPricing.disabled_at.is_(None),
                 ModelPricing.is_allowed.is_(True),
+                ModelPricing.endpoint_kind == "messages",
             )
-            .order_by(ModelPricing.endpoint_kind, ModelPricing.model)
+            .order_by(ModelPricing.model)
         )
         available_models = pricing_result.scalars().all()
 
@@ -777,7 +779,8 @@ async def user_create_api_token(
         if not allow_all_models:
             check = await session.execute(
                 select(ModelPricing.model).where(
-                    ModelPricing.model.in_(selected_models)
+                    ModelPricing.model.in_(selected_models),
+                    ModelPricing.endpoint_kind == "messages",
                 )
             )
             known = {r[0] for r in check.all()}
@@ -878,7 +881,8 @@ async def user_update_token_models(
         if not allow_all_models:
             check = await session.execute(
                 select(ModelPricing.model).where(
-                    ModelPricing.model.in_(selected_models)
+                    ModelPricing.model.in_(selected_models),
+                    ModelPricing.endpoint_kind == "messages",
                 )
             )
             known = {r[0] for r in check.all()}
