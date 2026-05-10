@@ -85,7 +85,7 @@
     </form>
   </div>
 
-  <!-- Deactivate -->
+  <!-- Deactivate / Activate -->
   {% if target_user.is_active %}
   <div class="bg-white shadow rounded p-5 border border-red-100">
     <h2 class="text-base font-semibold text-red-700 mb-1">Deactivate User</h2>
@@ -95,6 +95,18 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded text-sm">
         Deactivate
+      </button>
+    </form>
+  </div>
+  {% else %}
+  <div class="bg-white shadow rounded p-5 border border-green-100">
+    <h2 class="text-base font-semibold text-green-700 mb-1">Activate User</h2>
+    <p class="text-sm text-gray-500 mb-3">Restores login and API access. Existing tokens stay revoked — use Regenerate to issue new ones.</p>
+    <form method="post" action="/dashboard/users/{{ target_user.id }}/activate"
+          onsubmit="return confirm('Reactivate this user?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">
+        Activate
       </button>
     </form>
   </div>

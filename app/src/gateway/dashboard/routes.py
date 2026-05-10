@@ -646,6 +646,30 @@ async def user_deactivate(
     return _redirect(f"/dashboard/users/{user_id}", flash_msg="User deactivated.", secret=secret)
 
 
+@router.post("/users/{user_id}/activate")
+async def user_activate(
+    request: Request,
+    user_id: UUID,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Reactivate a previously deactivated user."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    form = dict(await request.form())
+    if not _check_csrf(form, request=request, secret=secret):
+        return _csrf_invalid()
+
+    async with request.app.state.db_session_factory() as session:
+        await session.execute(
+            update(User).where(User.id == user_id).values(is_active=True)
+        )
+        await session.commit()
+
+    logger.info("dashboard.user_activated", admin_user_id=str(admin[0].id), user_id=str(user_id))
+    return _redirect(f"/dashboard/users/{user_id}", flash_msg="User activated.", secret=secret)
+
+
 @router.post("/users/{user_id}/regenerate")
 async def user_regenerate(
     request: Request,
