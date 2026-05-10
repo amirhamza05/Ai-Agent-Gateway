@@ -197,6 +197,11 @@ def create_app() -> FastAPI:
     templates_dir = Path(__file__).parent / "dashboard" / "templates"
     templates = Jinja2Templates(directory=str(templates_dir))
 
+    # Dashboard times are rendered in Asia/Dhaka (GMT+6, no DST). Storage
+    # remains UTC end-to-end — we only shift on the way out to the
+    # template so an operator in Dhaka sees local wall-clock time.
+    _DHAKA_TZ = _dt.timezone(_dt.timedelta(hours=6), name="GMT+6")
+
     def _relative_time(dt: object) -> str:
         if dt is None:
             return "never"
@@ -217,7 +222,10 @@ def create_app() -> FastAPI:
         if dt is None:
             return ""
         if hasattr(dt, "strftime"):
-            return dt.strftime("%Y-%m-%d %H:%M")  # type: ignore[union-attr]
+            if getattr(dt, "tzinfo", None) is None:  # type: ignore[union-attr]
+                dt = dt.replace(tzinfo=_dt.timezone.utc)  # type: ignore[union-attr]
+            local = dt.astimezone(_DHAKA_TZ)  # type: ignore[union-attr]
+            return local.strftime("%Y-%m-%d %H:%M GMT+6")
         return str(dt)
 
     from gateway.dashboard.server_stats import format_bytes as _format_bytes
