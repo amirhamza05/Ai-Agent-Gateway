@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Vector DB Search — GeoSWMM Admin{% endblock %}
+{% block content %}
+<div class="max-w-3xl">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-gray-800">Vector DB — Similarity Search</h1>
+    <a href="/dashboard/vectordb" class="text-sm text-blue-600 hover:underline">Back to list</a>
+  </div>
+
+
+  <!-- Search form -->
+  <form
+    method="post"
+    action="/dashboard/vectordb/search"
+    hx-post="/dashboard/vectordb/search"
+    hx-target="#search-results"
+    hx-swap="innerHTML"
+    hx-indicator="#search-spinner"
+    class="bg-white shadow rounded-lg p-6 mb-4"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <!-- Collection -->
+      <div class="col-span-2 sm:col-span-1">
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          Collection <span class="text-red-500">*</span>
+        </label>
+        <input
+          type="text"
+          name="collection"
+          value="{{ form_values.collection or '' }}"
+          required
+          pattern="[A-Za-z0-9_\-]{1,64}"
+          placeholder="e.g. geoswmm_docs"
+          class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+        >
+      </div>
+
+      <!-- Limit -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Limit (1–50)</label>
+        <input
+          type="number"
+          name="limit"
+          value="{{ form_values.limit or 10 }}"
+          min="1" max="50"
+          class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+        >
+      </div>
+
+      <!-- Score threshold -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Score threshold (optional, 0–1)</label>
+        <input
+          type="number"
+          name="score_threshold"
+          value="{{ form_values.score_threshold or '' }}"
+          min="0" max="1" step="0.01"
+          placeholder="e.g. 0.75"
+          class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+        >
+      </div>
+    </div>
+
+    <!-- Query text -->
+    <div class="mb-4">
+      <label class="block text-sm font-medium text-gray-700 mb-1">
+        Query text <span class="text-red-500">*</span>
+      </label>
+      <textarea
+        name="query_text"
+        rows="4"
+        required
+        placeholder="Enter text to search for similar embeddings…"
+        class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+      >{{ form_values.query_text or '' }}</textarea>
+    </div>
+
+    <div class="flex items-center gap-4">
+      <button
+        type="submit"
+        class="bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium px-5 py-2 rounded"
+      >
+        Search
+      </button>
+      <span id="search-spinner" class="htmx-indicator text-sm text-gray-500">Searching…</span>
+    </div>
+  </form>
+
+  <!-- Results area (swapped by HTMX or rendered inline on full reload) -->
+  <div id="search-results">
+    {% if results is not none %}
+      {% include "vectordb/search_results.html" %}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

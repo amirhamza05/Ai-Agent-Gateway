@@ -1,0 +1,41 @@
+{% if results is not none %}
+  {% if results %}
+    <div class="bg-white shadow rounded overflow-hidden">
+      <div class="px-4 py-3 bg-gray-50 border-b text-sm text-gray-600 font-medium">
+        {{ results | length }} result(s) returned
+      </div>
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+          <tr>
+            <th class="px-4 py-3 text-left">Point ID</th>
+            <th class="px-4 py-3 text-right">Score</th>
+            <th class="px-4 py-3 text-left">Text (preview)</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          {% for hit in results %}
+          <tr class="hover:bg-gray-50">
+            <td class="px-4 py-2 text-gray-600 text-xs font-mono">{{ hit.id }}</td>
+            <td class="px-4 py-2 text-right text-gray-700 text-xs">
+              {{ "%.4f" | format(hit.score | float) }}
+            </td>
+            <td class="px-4 py-2 text-gray-700 text-xs max-w-sm truncate">
+              {% if hit.payload and hit.payload.text %}
+                {{ hit.payload.text[:120] }}{% if hit.payload.text | length > 120 %}…{% endif %}
+              {% elif hit.payload %}
+                <span class="text-gray-400 font-mono">{{ hit.payload | tojson }}</span>
+              {% else %}
+                <span class="text-gray-400">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="bg-white shadow rounded p-6 text-center text-gray-400 text-sm">
+      No results found for this query in the specified collection.
+    </div>
+  {% endif %}
+{% endif %}

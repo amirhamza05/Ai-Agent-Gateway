@@ -25,7 +25,9 @@ import datetime as _dt
 import hashlib
 import json
 import math
+import re as _re
 import secrets
+import uuid as _uuid
 from dataclasses import asdict
 from decimal import Decimal
 from typing import Any
@@ -60,13 +62,12 @@ from gateway.dashboard import server_stats
 from gateway.credential_store import (
     CredentialStore,
     SETTING_OPENROUTER_KEY,
-    SETTING_QDRANT_KEY,
-    SETTING_QDRANT_URL,
 )
 from gateway.db.models import (
     ApiToken,
     ApiTokenModel,
     DashboardSession,
+    Embedding,
     GatewaySettings,
     ModelPricing,
     RefreshToken,
@@ -1797,10 +1798,10 @@ async def reports_latency_json(
 
 
 # ===========================================================================
-# Settings (OpenRouter + Qdrant credentials)
+# Settings (OpenRouter credentials)
 # ===========================================================================
 
-_SETTINGS_KEYS = [SETTING_OPENROUTER_KEY, SETTING_QDRANT_URL, SETTING_QDRANT_KEY]
+_SETTINGS_KEYS = [SETTING_OPENROUTER_KEY]
 
 
 def _mask(value: str) -> str:
@@ -1831,10 +1832,6 @@ async def settings_page(
             return "db"
         if key == SETTING_OPENROUTER_KEY and settings.openrouter_api_key:
             return "env"
-        if key == SETTING_QDRANT_URL and settings.qdrant_url:
-            return "env"
-        if key == SETTING_QDRANT_KEY and settings.qdrant_api_key:
-            return "env"
         return "unset"
 
     def _display_value(key: str) -> str:
@@ -1842,10 +1839,6 @@ async def settings_page(
             return _mask(db_values[key])
         if key == SETTING_OPENROUTER_KEY and settings.openrouter_api_key:
             return _mask(settings.openrouter_api_key.get_secret_value())
-        if key == SETTING_QDRANT_URL and settings.qdrant_url:
-            return settings.qdrant_url  # URL is not secret — show it
-        if key == SETTING_QDRANT_KEY and settings.qdrant_api_key:
-            return _mask(settings.qdrant_api_key.get_secret_value())
         return ""
 
     ctx = _base_context(request, secret=secret)
@@ -1853,8 +1846,6 @@ async def settings_page(
         "source": {k: _source(k) for k in _SETTINGS_KEYS},
         "display": {k: _display_value(k) for k in _SETTINGS_KEYS},
         "SETTING_OPENROUTER_KEY": SETTING_OPENROUTER_KEY,
-        "SETTING_QDRANT_URL": SETTING_QDRANT_URL,
-        "SETTING_QDRANT_KEY": SETTING_QDRANT_KEY,
     })
     return request.app.state.templates.TemplateResponse(request, "settings.html", ctx)
 
@@ -1974,3 +1965,572 @@ async def server_status(
         "gateway_version": settings.version,
     })
     return request.app.state.templates.TemplateResponse(request, "server.html", ctx)
+
+
+# ===========================================================================
+# Vector DB  (pgvector embeddings management)
+# ===========================================================================
+
+from gateway.dashboard.vectordb import EMBED_MODEL, EmbedProviderStatus
+from gateway.upstream.pgvector import upsert as _pgvec_upsert, search as _pgvec_search
+
+_COLLECTION_RE = _re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
+
+_VECTORDB_PAGE_SIZE = 25
+
+
+def _get_embed_status(request: Request) -> EmbedProviderStatus:
+    status_obj: EmbedProviderStatus | None = getattr(
+        request.app.state, "embed_provider_status", None
+    )
+    if status_obj is None:
+        # Lazily create if the app didn't wire it in lifespan (e.g. tests).
+        status_obj = EmbedProviderStatus()
+        request.app.state.embed_provider_status = status_obj
+    return status_obj
+
+
+async def _embed_text(text: str, request: Request, session: Any) -> list[float]:
+    """Embed ``text`` via OpenRouter and return the vector.
+
+    Raises :exc:`RuntimeError` with a user-safe message on any failure.
+    """
+    from gateway.credential_store import CredentialMissing, SETTING_OPENROUTER_KEY
+    from gateway.upstream.openrouter import call_embeddings
+    import httpx as _httpx
+
+    settings = get_settings()
+    cred_store: CredentialStore = request.app.state.credential_store
+    client = request.app.state.openrouter_client
+
+    try:
+        api_key = await cred_store.resolve(SETTING_OPENROUTER_KEY, session)
+    except CredentialMissing:
+        raise RuntimeError("Embedding provider not configured — OpenRouter API key missing.")
+
+    try:
+        resp, parsed = await call_embeddings(
+            client,
+            api_key=api_key,
+            base_url=settings.openrouter_base_url,
+            model=EMBED_MODEL,
+            inputs=[text],
+        )
+    except _httpx.HTTPError as exc:
+        raise RuntimeError(f"Embedding provider unreachable: {type(exc).__name__}") from exc
+
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Embedding provider returned HTTP {resp.status_code}.")
+
+    if parsed is None or "data" not in parsed or not parsed["data"]:
+        raise RuntimeError("Embedding provider returned an unexpected response shape.")
+
+    vector = parsed["data"][0].get("embedding")
+    if not isinstance(vector, list) or len(vector) != 1536:
+        raise RuntimeError("Embedding provider returned a vector with unexpected dimension.")
+
+    return vector
+
+
+@router.get("/vectordb")
+async def vectordb_list(
+    request: Request,
+    page: int = 1,
+    collection: str = "",
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """List embeddings with optional collection filter."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+    size = _VECTORDB_PAGE_SIZE
+
+    async with request.app.state.db_session_factory() as session:
+        stmt_base = select(Embedding)
+        count_base = select(func.count()).select_from(Embedding)
+        if collection:
+            stmt_base = stmt_base.where(Embedding.collection == collection)
+            count_base = count_base.where(Embedding.collection == collection)
+
+        total_r = await session.execute(count_base)
+        total = int(total_r.scalar_one())
+        pg = _paginate(total, page, size)
+
+        rows_r = await session.execute(
+            stmt_base.order_by(Embedding.id.desc()).limit(pg["size"]).offset(pg["offset"])
+        )
+        rows = rows_r.scalars().all()
+
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "rows": rows,
+        "collection_filter": collection,
+        **pg,
+    })
+    return request.app.state.templates.TemplateResponse(request, "vectordb/list.html", ctx)
+
+
+@router.get("/vectordb/new")
+async def vectordb_new_form(
+    request: Request,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """New embedding form."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+    csrf_token = _csrf_token(request, secret=secret)
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "csrf_token": csrf_token,
+        "action": "/dashboard/vectordb",
+        "row": None,
+        "form_values": {},
+    })
+    return request.app.state.templates.TemplateResponse(request, "vectordb/form.html", ctx)
+
+
+@router.get("/vectordb/search")
+async def vectordb_search_form(
+    request: Request,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Render the search form (no results yet)."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+    csrf_token = _csrf_token(request, secret=secret)
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "csrf_token": csrf_token,
+        "results": None,
+        "form_values": {},
+        "provider_ok": True,
+        "provider_reason": None,
+    })
+    return request.app.state.templates.TemplateResponse(request, "vectordb/search.html", ctx)
+
+
+@router.post("/vectordb/search")
+async def vectordb_search_post(
+    request: Request,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Execute a similarity search; HTMX swaps only the results div."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    form = dict(await request.form())
+    if not _check_csrf(form, request=request, secret=secret):
+        return _csrf_invalid()
+
+    collection = str(form.get("collection", "")).strip()
+    query_text = str(form.get("query_text", "")).strip()
+    limit_str = str(form.get("limit", "10")).strip()
+    threshold_str = str(form.get("score_threshold", "")).strip()
+
+    try:
+        limit = max(1, min(50, int(limit_str)))
+    except ValueError:
+        limit = 10
+
+    score_threshold: float | None = None
+    if threshold_str:
+        try:
+            score_threshold = float(threshold_str)
+        except ValueError:
+            score_threshold = None
+
+    form_values = {
+        "collection": collection,
+        "query_text": query_text,
+        "limit": limit,
+        "score_threshold": score_threshold,
+    }
+
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "csrf_token": _csrf_token(request, secret=secret),
+        "results": None,
+        "form_values": form_values,
+        "provider_ok": True,
+        "provider_reason": None,
+    })
+
+    if not collection or not _COLLECTION_RE.match(collection):
+        ctx["provider_ok"] = False
+        ctx["provider_reason"] = None
+        ctx.update({"flash": {"msg": "Collection name is required and must match ^[A-Za-z0-9_-]{1,64}$.", "kind": "error"}})
+        return request.app.state.templates.TemplateResponse(
+            request, "vectordb/search.html", ctx, status_code=400
+        )
+
+    if not query_text:
+        ctx.update({"flash": {"msg": "Query text is required.", "kind": "error"}})
+        return request.app.state.templates.TemplateResponse(
+            request, "vectordb/search.html", ctx, status_code=400
+        )
+
+    embed_status = _get_embed_status(request)
+
+    async with request.app.state.db_session_factory() as session:
+        provider_ok, provider_reason = await embed_status.check(
+            client=request.app.state.openrouter_client,
+            cred_store=request.app.state.credential_store,
+            pricing_cache=request.app.state.pricing_cache,
+            session=session,
+            base_url=settings.openrouter_base_url,
+        )
+
+        ctx["provider_ok"] = provider_ok
+        ctx["provider_reason"] = provider_reason
+
+        if not provider_ok:
+            ctx.update({"flash": {
+                "msg": f"Embeddings provider unavailable — cannot search until OpenRouter responds with a valid response for {EMBED_MODEL}. Reason: {provider_reason}",
+                "kind": "error",
+            }})
+            return request.app.state.templates.TemplateResponse(
+                request, "vectordb/search.html", ctx, status_code=503
+            )
+
+        try:
+            vector = await _embed_text(query_text, request, session)
+        except RuntimeError as exc:
+            embed_status.invalidate()
+            ctx.update({"flash": {"msg": str(exc), "kind": "error"}})
+            return request.app.state.templates.TemplateResponse(
+                request, "vectordb/search.html", ctx, status_code=503
+            )
+
+        result = await _pgvec_search(
+            session,
+            collection=collection,
+            vector=vector,
+            limit=limit,
+            filter=None,
+            with_payload=True,
+            score_threshold=score_threshold,
+        )
+
+    logger.info(
+        "dashboard.vectordb.search",
+        admin_user_id=str(request.state.dashboard_user.id),
+        collection=collection,
+        result_count=len(result.get("result", [])),
+    )
+
+    ctx["results"] = result.get("result", [])
+    # HTMX partial: if the request has HX-Request header, return only the
+    # results fragment; otherwise render the full page.
+    is_htmx = request.headers.get("HX-Request") == "true"
+    template = "vectordb/search_results.html" if is_htmx else "vectordb/search.html"
+    return request.app.state.templates.TemplateResponse(request, template, ctx)
+
+
+@router.post("/vectordb")
+async def vectordb_create(
+    request: Request,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Create a new embedding row."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    form = dict(await request.form())
+    if not _check_csrf(form, request=request, secret=secret):
+        return _csrf_invalid()
+
+    collection = str(form.get("collection", "")).strip()
+    point_id = str(form.get("point_id", "")).strip() or str(_uuid.uuid4())
+    text_val = str(form.get("text", "")).strip()
+
+    form_values = {"collection": collection, "point_id": point_id, "text": text_val}
+
+    if not collection or not _COLLECTION_RE.match(collection):
+        ctx = _base_context(request, secret=secret)
+        ctx.update({
+            "csrf_token": _csrf_token(request, secret=secret),
+            "action": "/dashboard/vectordb",
+            "row": None,
+            "form_values": form_values,
+            "flash": {"msg": "Collection name is required and must match ^[A-Za-z0-9_-]{1,64}$.", "kind": "error"},
+        })
+        return request.app.state.templates.TemplateResponse(
+            request, "vectordb/form.html", ctx, status_code=400
+        )
+
+    if not text_val:
+        ctx = _base_context(request, secret=secret)
+        ctx.update({
+            "csrf_token": _csrf_token(request, secret=secret),
+            "action": "/dashboard/vectordb",
+            "row": None,
+            "form_values": form_values,
+            "flash": {"msg": "Text is required.", "kind": "error"},
+        })
+        return request.app.state.templates.TemplateResponse(
+            request, "vectordb/form.html", ctx, status_code=400
+        )
+
+    embed_status = _get_embed_status(request)
+
+    async with request.app.state.db_session_factory() as session:
+        provider_ok, provider_reason = await embed_status.check(
+            client=request.app.state.openrouter_client,
+            cred_store=request.app.state.credential_store,
+            pricing_cache=request.app.state.pricing_cache,
+            session=session,
+            base_url=settings.openrouter_base_url,
+        )
+
+        if not provider_ok:
+            ctx = _base_context(request, secret=secret)
+            ctx.update({
+                "csrf_token": _csrf_token(request, secret=secret),
+                "action": "/dashboard/vectordb",
+                "row": None,
+                "form_values": form_values,
+                "flash": {
+                    "msg": f"Embeddings provider unavailable — cannot create until OpenRouter responds with a valid response for {EMBED_MODEL}. Reason: {provider_reason}",
+                    "kind": "error",
+                },
+            })
+            return request.app.state.templates.TemplateResponse(
+                request, "vectordb/form.html", ctx, status_code=503
+            )
+
+        try:
+            vector = await _embed_text(text_val, request, session)
+        except RuntimeError as exc:
+            embed_status.invalidate()
+            ctx = _base_context(request, secret=secret)
+            ctx.update({
+                "csrf_token": _csrf_token(request, secret=secret),
+                "action": "/dashboard/vectordb",
+                "row": None,
+                "form_values": form_values,
+                "flash": {"msg": str(exc), "kind": "error"},
+            })
+            return request.app.state.templates.TemplateResponse(
+                request, "vectordb/form.html", ctx, status_code=503
+            )
+
+        await _pgvec_upsert(
+            session,
+            collection=collection,
+            points=[{"id": point_id, "vector": vector, "payload": {"text": text_val}}],
+        )
+
+    logger.info(
+        "dashboard.vectordb.created",
+        admin_user_id=str(request.state.dashboard_user.id),
+        collection=collection,
+        point_id=point_id,
+    )
+    return _redirect(
+        "/dashboard/vectordb",
+        flash_msg=f"Embedding created (point_id={point_id}).",
+        flash_kind="success",
+        secret=secret,
+    )
+
+
+@router.get("/vectordb/{embed_id:int}/edit")
+async def vectordb_edit_form(
+    request: Request,
+    embed_id: int,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Edit-embedding form."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    async with request.app.state.db_session_factory() as session:
+        row = await session.get(Embedding, embed_id)
+        if row is None:
+            return _redirect(
+                "/dashboard/vectordb",
+                flash_msg="Embedding not found.",
+                flash_kind="error",
+                secret=secret,
+            )
+
+    csrf_token = _csrf_token(request, secret=secret)
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "csrf_token": csrf_token,
+        "action": f"/dashboard/vectordb/{embed_id}",
+        "row": row,
+        "form_values": {
+            "collection": row.collection,
+            "point_id": row.point_id,
+            "text": row.payload.get("text", "") if row.payload else "",
+        },
+    })
+    return request.app.state.templates.TemplateResponse(request, "vectordb/form.html", ctx)
+
+
+@router.post("/vectordb/{embed_id:int}")
+async def vectordb_update(
+    request: Request,
+    embed_id: int,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Update (re-embed) an existing embedding row."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    form = dict(await request.form())
+    if not _check_csrf(form, request=request, secret=secret):
+        return _csrf_invalid()
+
+    collection = str(form.get("collection", "")).strip()
+    point_id = str(form.get("point_id", "")).strip()
+    text_val = str(form.get("text", "")).strip()
+
+    form_values = {"collection": collection, "point_id": point_id, "text": text_val}
+
+    if not collection or not _COLLECTION_RE.match(collection):
+        ctx = _base_context(request, secret=secret)
+        ctx.update({
+            "csrf_token": _csrf_token(request, secret=secret),
+            "action": f"/dashboard/vectordb/{embed_id}",
+            "row": None,
+            "form_values": form_values,
+            "flash": {"msg": "Collection name must match ^[A-Za-z0-9_-]{1,64}$.", "kind": "error"},
+        })
+        return request.app.state.templates.TemplateResponse(
+            request, "vectordb/form.html", ctx, status_code=400
+        )
+
+    if not text_val:
+        ctx = _base_context(request, secret=secret)
+        ctx.update({
+            "csrf_token": _csrf_token(request, secret=secret),
+            "action": f"/dashboard/vectordb/{embed_id}",
+            "row": None,
+            "form_values": form_values,
+            "flash": {"msg": "Text is required.", "kind": "error"},
+        })
+        return request.app.state.templates.TemplateResponse(
+            request, "vectordb/form.html", ctx, status_code=400
+        )
+
+    embed_status = _get_embed_status(request)
+
+    async with request.app.state.db_session_factory() as session:
+        row = await session.get(Embedding, embed_id)
+        if row is None:
+            return _redirect(
+                "/dashboard/vectordb",
+                flash_msg="Embedding not found.",
+                flash_kind="error",
+                secret=secret,
+            )
+
+        if not point_id:
+            point_id = row.point_id
+
+        provider_ok, provider_reason = await embed_status.check(
+            client=request.app.state.openrouter_client,
+            cred_store=request.app.state.credential_store,
+            pricing_cache=request.app.state.pricing_cache,
+            session=session,
+            base_url=settings.openrouter_base_url,
+        )
+
+        if not provider_ok:
+            ctx = _base_context(request, secret=secret)
+            ctx.update({
+                "csrf_token": _csrf_token(request, secret=secret),
+                "action": f"/dashboard/vectordb/{embed_id}",
+                "row": row,
+                "form_values": form_values,
+                "flash": {
+                    "msg": f"Embeddings provider unavailable — cannot edit until OpenRouter responds with a valid response for {EMBED_MODEL}. Reason: {provider_reason}",
+                    "kind": "error",
+                },
+            })
+            return request.app.state.templates.TemplateResponse(
+                request, "vectordb/form.html", ctx, status_code=503
+            )
+
+        try:
+            vector = await _embed_text(text_val, request, session)
+        except RuntimeError as exc:
+            embed_status.invalidate()
+            ctx = _base_context(request, secret=secret)
+            ctx.update({
+                "csrf_token": _csrf_token(request, secret=secret),
+                "action": f"/dashboard/vectordb/{embed_id}",
+                "row": row,
+                "form_values": form_values,
+                "flash": {"msg": str(exc), "kind": "error"},
+            })
+            return request.app.state.templates.TemplateResponse(
+                request, "vectordb/form.html", ctx, status_code=503
+            )
+
+        await _pgvec_upsert(
+            session,
+            collection=collection,
+            points=[{"id": point_id, "vector": vector, "payload": {"text": text_val}}],
+        )
+
+        # If the primary key row is different from the upsert key (i.e. user
+        # changed collection or point_id), remove the old row.
+        if row.collection != collection or row.point_id != point_id:
+            await session.delete(row)
+            await session.commit()
+
+    logger.info(
+        "dashboard.vectordb.updated",
+        admin_user_id=str(request.state.dashboard_user.id),
+        embed_id=embed_id,
+        collection=collection,
+        point_id=point_id,
+    )
+    return _redirect(
+        "/dashboard/vectordb",
+        flash_msg=f"Embedding updated (point_id={point_id}).",
+        flash_kind="success",
+        secret=secret,
+    )
+
+
+@router.post("/vectordb/{embed_id:int}/delete")
+async def vectordb_delete(
+    request: Request,
+    embed_id: int,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Hard-delete an embedding row by primary key."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    form = dict(await request.form())
+    if not _check_csrf(form, request=request, secret=secret):
+        return _csrf_invalid()
+
+    async with request.app.state.db_session_factory() as session:
+        row = await session.get(Embedding, embed_id)
+        if row is not None:
+            point_id = row.point_id
+            collection = row.collection
+            await session.delete(row)
+            await session.commit()
+        else:
+            point_id = str(embed_id)
+            collection = ""
+
+    logger.info(
+        "dashboard.vectordb.deleted",
+        admin_user_id=str(request.state.dashboard_user.id),
+        embed_id=embed_id,
+        collection=collection,
+        point_id=point_id,
+    )
+    return _redirect(
+        "/dashboard/vectordb",
+        flash_msg=f"Embedding {embed_id} deleted.",
+        flash_kind="success",
+        secret=secret,
+    )

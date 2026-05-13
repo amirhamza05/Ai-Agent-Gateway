@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Vector DB — GeoSWMM Admin{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-2xl font-bold text-gray-800">Vector DB — Embeddings</h1>
+  <div class="flex items-center space-x-3">
+    <a href="/dashboard/vectordb/search"
+       class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-sm font-medium">
+      Search
+    </a>
+    <a href="/dashboard/vectordb/new"
+       class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium">
+      New Embedding
+    </a>
+  </div>
+</div>
+
+<!-- Collection filter -->
+<div class="bg-white shadow rounded p-4 mb-4">
+  <form method="get" action="/dashboard/vectordb" class="flex items-end gap-3">
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">Collection</label>
+      <input type="text" name="collection" value="{{ collection_filter }}" placeholder="filter by collection..."
+             class="border border-gray-300 rounded px-2 py-1 text-sm w-52 focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>
+    <button type="submit"
+            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm">Filter</button>
+    {% if collection_filter %}
+      <a href="/dashboard/vectordb" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-1.5 rounded text-sm">Reset</a>
+    {% endif %}
+  </form>
+</div>
+
+<div class="bg-white shadow rounded overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+      <tr>
+        <th class="px-4 py-3 text-left">ID</th>
+        <th class="px-4 py-3 text-left">Collection</th>
+        <th class="px-4 py-3 text-left">Point ID</th>
+        <th class="px-4 py-3 text-left">Text (preview)</th>
+        <th class="px-4 py-3 text-left">Created</th>
+        <th class="px-4 py-3 text-left">Updated</th>
+        <th class="px-4 py-3"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for row in rows %}
+      <tr class="hover:bg-gray-50">
+        <td class="px-4 py-2 text-gray-400 text-xs">{{ row.id }}</td>
+        <td class="px-4 py-2 text-gray-700 text-xs font-mono">{{ row.collection }}</td>
+        <td class="px-4 py-2 text-gray-600 text-xs font-mono">{{ row.point_id }}</td>
+        <td class="px-4 py-2 text-gray-700 text-xs max-w-xs truncate">
+          {% if row.payload and row.payload.text %}
+            {{ row.payload.text[:80] }}{% if row.payload.text|length > 80 %}…{% endif %}
+          {% else %}
+            <span class="text-gray-400">—</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-2 text-gray-500 text-xs whitespace-nowrap">{{ row.created_at | fmt_date }}</td>
+        <td class="px-4 py-2 text-gray-500 text-xs whitespace-nowrap">{{ row.updated_at | fmt_date }}</td>
+        <td class="px-4 py-2 text-right">
+          <div class="flex items-center justify-end space-x-2">
+            <a href="/dashboard/vectordb/{{ row.id }}/edit"
+               class="text-blue-600 hover:underline text-xs">Edit</a>
+            <form method="post" action="/dashboard/vectordb/{{ row.id }}/delete"
+                  onsubmit="return confirm('Delete embedding {{ row.id }}?');" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="text-red-500 hover:underline text-xs">Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="7" class="px-4 py-8 text-center text-gray-400">No embeddings found{% if collection_filter %} in collection "{{ collection_filter }}"{% endif %}.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% set base_url = "/dashboard/vectordb" %}
+{% include "partials/pagination.html" %}
+{% endblock %}

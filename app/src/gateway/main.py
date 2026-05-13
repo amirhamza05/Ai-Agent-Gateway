@@ -116,12 +116,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     openrouter_client = build_openrouter_client()
     app.state.openrouter_client = openrouter_client
 
+    # ---- Embedding provider status cache (dashboard vectordb) ----------
+    # 60-second TTL preflight cache.  Shared across all /dashboard/vectordb
+    # requests on this worker.  Invalidated on any upstream error so a
+    # recently-fixed credential is picked up on the next user action.
+    from gateway.dashboard.vectordb import EmbedProviderStatus
+    app.state.embed_provider_status = EmbedProviderStatus()
+
     # ---- Qdrant HTTP client --------------------------------------------
     # Separate from OpenRouter because (a) different timeout profile
     # (no streaming, faster reads), (b) different auth header shape
     # (``api-key:`` vs. ``Authorization: Bearer``), and (c) lifespan
     # parity makes it trivial for tests to swap in a respx-mocked
     # transport per app.
+    # NOTE: when settings.pgvector_enabled is True this client is a
+    # no-op — routes branch before ever touching app.state.qdrant_client.
+    # Safe to delete this block once the flag has been on for 7 days
+    # (migration phase 5 in docs/qdrant-to-pgvector-migration.md §8).
     qdrant_client = build_qdrant_client()
     app.state.qdrant_client = qdrant_client
 
