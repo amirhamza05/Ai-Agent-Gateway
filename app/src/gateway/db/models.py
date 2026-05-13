@@ -17,6 +17,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -28,6 +29,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -503,4 +505,82 @@ class ModelPricing(Base):
     disabled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+
+
+# ---- pgvector embeddings -----------------------------------------------------
+
+
+class Embedding(Base):
+    """A stored vector embedding, replacing the Qdrant Cloud backend.
+
+    Each row maps a ``(collection, point_id)`` pair to a 1536-dimensional
+    embedding vector and an arbitrary JSONB payload (the Qdrant "payload"
+    concept). The unique constraint on ``(collection, point_id)`` is the
+    upsert key: ``INSERT ... ON CONFLICT DO UPDATE`` updates the embedding
+    and payload in place without producing a duplicate row.
+
+    Dimension is fixed at 1536 — covers OpenAI ``text-embedding-3-small``
+    and Voyage ``voyage-3-lite``. If a future provider needs a different
+    dimension, add a second table rather than widening this one.
+
+    No ``user_id`` column: vector storage is a shared resource for the
+    trial-month workload. Per-user isolation can be added later with an
+    ``ALTER TABLE embeddings ADD COLUMN user_id BIGINT REFERENCES users(id)``
+    migration; the plan explicitly defers this.
+
+    Indexes:
+    * ``embeddings_collection_idx`` — btree on ``collection``, used by every
+      search/upsert that filters to a specific collection.
+    * ``embeddings_payload_gin`` — GIN with ``jsonb_path_ops`` on ``payload``,
+      used by the Qdrant-compatible filter translator (``payload @> ...``).
+    * ``embeddings_hnsw_cos`` — HNSW with ``vector_cosine_ops`` for ANN search.
+      Built via ``op.execute`` in the migration because Alembic's
+      ``op.create_index`` does not model HNSW storage parameters.
+    """
+
+    __tablename__ = "embeddings"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(always=False),
+        primary_key=True,
+    )
+    collection: Mapped[str] = mapped_column(Text, nullable=False)
+    point_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # pgvector.sqlalchemy.Vector is an SQLAlchemy TypeDecorator. The dimension
+    # argument is enforced at the Postgres level by the ``vector(1536)`` type.
+    embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
+    payload: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("collection", "point_id", name="uq_embeddings_collection_point"),
+        Index("embeddings_collection_idx", "collection"),
+        # GIN index on payload for containment queries (payload @> '{"key": "val"}').
+        # Defined here so autogenerate can round-trip it; the migration also
+        # creates it with ``postgresql_using="gin"`` and ``jsonb_path_ops``.
+        Index(
+            "embeddings_payload_gin",
+            "payload",
+            postgresql_using="gin",
+            postgresql_ops={"payload": "jsonb_path_ops"},
+        ),
+        # HNSW index is NOT declared here: Alembic cannot express HNSW storage
+        # parameters (m, ef_construction) via op.create_index, so the migration
+        # uses op.execute raw SQL. Keeping it out of __table_args__ prevents
+        # autogenerate from re-creating it as a plain btree on every run.
     )
