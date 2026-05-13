@@ -1,9 +1,12 @@
 """``POST /v1/qdrant/search`` and ``POST /v1/qdrant/upsert`` — Qdrant proxy.
 
-Both endpoints are JSON-in / JSON-out passthroughs to Qdrant Cloud's
-points API. The collection name is user-controlled, so we validate it
-against a strict regex before interpolating into the URL — see
-:func:`gateway.upstream.qdrant.validate_collection`.
+Both endpoints are JSON-in / JSON-out passthroughs to either Qdrant Cloud or
+the local pgvector backend, depending on ``settings.pgvector_enabled``.
+
+When ``pgvector_enabled`` is True the Qdrant Cloud httpx client is bypassed
+entirely; the request is served by :mod:`gateway.upstream.pgvector` using the
+existing async SQLAlchemy session.  When False the existing ``_proxy`` body
+forwards the call to Qdrant Cloud via ``app.state.qdrant_client``.
 
 Cost handling: Qdrant Cloud bills on storage, not per-call. Therefore
 ``cost_usd`` for these rows is **always 0** (not ``NULL`` — we want the
@@ -13,7 +16,9 @@ breakdowns work.
 
 Logging discipline matches the messages route: one ``request_log`` row
 per call written from a ``try/finally`` so failed upstream calls (4xx
-from Qdrant, network error) still produce an audit row.
+from Qdrant, network error) still produce an audit row.  The ``endpoint``
+string and all other columns are identical between the two backends so the
+dashboard's analytics keep working.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ from uuid import uuid4
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +49,7 @@ from gateway.db.models import User
 from gateway.limits import enforce_monthly_cap
 from gateway.logging_mw import insert_request_log
 from gateway.truncate import truncate
+from gateway.upstream import pgvector as pgvector_upstream
 from gateway.upstream.qdrant import (
     auth_headers,
     search_url,
@@ -115,7 +121,77 @@ class QdrantUpsertRequest(BaseModel):
     wait: bool = True
 
 
-# ---- Helpers --------------------------------------------------------------
+# ---- Logging helper -------------------------------------------------------
+
+
+async def _write_request_log(
+    *,
+    session: AsyncSession,
+    request: Request,
+    request_id: object,
+    user: User,
+    endpoint_name: str,
+    upstream_body: dict[str, Any],
+    response_text: str,
+    response_bytes: int,
+    status_code: int | None,
+    error_code: str | None,
+    latency_ms: int,
+    meta: dict[str, Any],
+    max_body_bytes: int,
+    chat_id: str | None,
+    log: object,
+) -> None:
+    """Write one ``request_log`` row and commit.
+
+    Identical column values for both the pgvector and Qdrant Cloud paths
+    so the dashboard's analytics keep working regardless of which backend
+    served the request.  ``meta`` should include ``backend: "pgvector"``
+    or ``backend: "qdrant"`` so operators can grep for the transition.
+    """
+    request_body_text, request_bytes = truncate(
+        json.dumps(upstream_body), max_body_bytes
+    )
+    response_body_text, _ = truncate(response_text or "", max_body_bytes)
+    actual_response_bytes = response_bytes or len((response_text or "").encode("utf-8"))
+
+    try:
+        await insert_request_log(
+            session,
+            request_id=request_id,  # type: ignore[arg-type]
+            user_id=user.id,
+            endpoint=endpoint_name,
+            model=None,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=_QDRANT_COST_USD,
+            status_code=status_code,
+            error_code=error_code,
+            latency_ms=latency_ms,
+            client_version=request.headers.get("X-Client-Version"),
+            client_ip=request.client.host if request.client else None,
+            request_body=upstream_body,
+            response_body=response_body_text,
+            request_bytes=request_bytes,
+            response_bytes=actual_response_bytes,
+            meta=meta,
+            chat_id=chat_id,
+        )
+        await session.commit()
+        log.info(  # type: ignore[union-attr]
+            "qdrant.completed",
+            status_code=status_code,
+            latency_ms=latency_ms,
+        )
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        try:
+            await session.rollback()
+        except Exception:  # pragma: no cover
+            pass
+        log.exception("qdrant.request_log_insert_failed")  # type: ignore[union-attr]
+
+
+# ---- Qdrant Cloud proxy (flag=false path) ---------------------------------
 
 
 async def _proxy(
@@ -132,7 +208,7 @@ async def _proxy(
     meta: dict[str, Any],
     chat_id: str | None = None,
 ) -> JSONResponse:
-    """Shared body for the two Qdrant routes.
+    """Shared body for the two Qdrant Cloud routes.
 
     Both search and upsert have the same audit/error/logging pattern;
     factoring it into one helper keeps the route handlers small and
@@ -205,50 +281,23 @@ async def _proxy(
         )
     finally:
         latency_ms = int((time.monotonic() - started) * 1000)
-        max_bytes = max_body_bytes
-
-        request_body_text, request_bytes = truncate(
-            json.dumps(upstream_body), max_bytes
+        await _write_request_log(
+            session=session,
+            request=request,
+            request_id=request_id,
+            user=user,
+            endpoint_name=endpoint_name,
+            upstream_body=upstream_body,
+            response_text=state["response_text"] or "",
+            response_bytes=state["response_bytes"] or 0,
+            status_code=state["status_code"] or None,
+            error_code=state["error_code"],
+            latency_ms=latency_ms,
+            meta=meta,
+            max_body_bytes=max_body_bytes,
+            chat_id=chat_id,
+            log=log,
         )
-        response_body_text, _ = truncate(state["response_text"] or "", max_bytes)
-        response_bytes = state["response_bytes"] or len(
-            (state["response_text"] or "").encode("utf-8")
-        )
-
-        try:
-            await insert_request_log(
-                session,
-                request_id=request_id,
-                user_id=user.id,
-                endpoint=endpoint_name,
-                model=None,
-                tokens_in=0,
-                tokens_out=0,
-                cost_usd=_QDRANT_COST_USD,
-                status_code=state["status_code"] or None,
-                error_code=state["error_code"],
-                latency_ms=latency_ms,
-                client_version=request.headers.get("X-Client-Version"),
-                client_ip=request.client.host if request.client else None,
-                request_body=upstream_body,
-                response_body=response_body_text,
-                request_bytes=request_bytes,
-                response_bytes=response_bytes,
-                meta=meta,
-                chat_id=chat_id,
-            )
-            await session.commit()
-            log.info(
-                "qdrant.completed",
-                status_code=state["status_code"],
-                latency_ms=latency_ms,
-            )
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            try:
-                await session.rollback()
-            except Exception:  # pragma: no cover
-                pass
-            log.exception("qdrant.request_log_insert_failed")
 
 
 # ---- Routes ---------------------------------------------------------------
@@ -262,15 +311,35 @@ async def qdrant_search(
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
-    """Forward a points-search to Qdrant.
+    """Forward a points-search to the configured vector backend.
+
+    When ``pgvector_enabled`` is True the request is served by the local
+    Postgres pgvector backend; no httpx call is made and no Qdrant
+    credentials are consulted.
+
+    When ``pgvector_enabled`` is False the request is proxied to Qdrant
+    Cloud via ``app.state.qdrant_client``.
 
     Cost: 0.00 USD recorded in ``request_log.cost_usd``. Qdrant Cloud
-    bills on storage, not per-call.
+    bills on storage, not per-call; pgvector has no per-call cost.
     """
     # Validates against ``^[A-Za-z0-9_\\-]{1,64}$``. Raises 400 if not
     # matched — the URL is then safe to interpolate.
     validate_collection(body.collection)
 
+    chat_id = request.headers.get("X-Chat-Id") or None
+
+    if settings.pgvector_enabled:
+        return await _pgvector_search(
+            body=body,
+            request=request,
+            user=user,
+            session=session,
+            settings=settings,
+            chat_id=chat_id,
+        )
+
+    # --- Qdrant Cloud path ------------------------------------------------
     cred_store: CredentialStore = request.app.state.credential_store
     try:
         qdrant_key = await cred_store.resolve(SETTING_QDRANT_KEY, session)
@@ -305,8 +374,8 @@ async def qdrant_search(
         url=search_url(q_url, body.collection),
         upstream_body=upstream_body,
         endpoint_name="qdrant.search",
-        meta={"collection": body.collection, "limit": body.limit},
-        chat_id=request.headers.get("X-Chat-Id") or None,
+        meta={"collection": body.collection, "limit": body.limit, "backend": "qdrant"},
+        chat_id=chat_id,
     )
 
 
@@ -318,13 +387,32 @@ async def qdrant_upsert(
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
-    """Forward a points-upsert (PUT) to Qdrant.
+    """Forward a points-upsert to the configured vector backend.
 
-    Cost: 0.00 USD recorded in ``request_log.cost_usd``. Qdrant Cloud
-    bills on storage, not per-call.
+    When ``pgvector_enabled`` is True the request is served by the local
+    Postgres pgvector backend; no httpx call is made and no Qdrant
+    credentials are consulted.
+
+    When ``pgvector_enabled`` is False the request is proxied to Qdrant
+    Cloud via ``app.state.qdrant_client``.
+
+    Cost: 0.00 USD recorded in ``request_log.cost_usd``.
     """
     validate_collection(body.collection)
 
+    chat_id = request.headers.get("X-Chat-Id") or None
+
+    if settings.pgvector_enabled:
+        return await _pgvector_upsert(
+            body=body,
+            request=request,
+            user=user,
+            session=session,
+            settings=settings,
+            chat_id=chat_id,
+        )
+
+    # --- Qdrant Cloud path ------------------------------------------------
     cred_store: CredentialStore = request.app.state.credential_store
     try:
         qdrant_key = await cred_store.resolve(SETTING_QDRANT_KEY, session)
@@ -350,6 +438,207 @@ async def qdrant_upsert(
         meta={
             "collection": body.collection,
             "point_count": len(body.points),
+            "backend": "qdrant",
         },
-        chat_id=request.headers.get("X-Chat-Id") or None,
+        chat_id=chat_id,
     )
+
+
+# ---- pgvector path helpers ------------------------------------------------
+
+
+async def _pgvector_search(
+    *,
+    body: QdrantSearchRequest,
+    request: Request,
+    user: User,
+    session: AsyncSession,
+    settings: Settings,
+    chat_id: str | None,
+) -> JSONResponse:
+    """Serve a search request from the local pgvector backend.
+
+    No httpx call, no ``app.state.qdrant_client``, no Qdrant credentials.
+    All SQL goes through the existing async SQLAlchemy session.
+    """
+    request_id = uuid4()
+    started = time.monotonic()
+    log = logger.bind(
+        request_id=str(request_id),
+        user_id=str(user.id),
+        endpoint="qdrant.search",
+    )
+
+    upstream_body: dict[str, Any] = {
+        "vector": body.vector,
+        "limit": body.limit,
+        "with_payload": body.with_payload,
+    }
+    if body.filter is not None:
+        upstream_body["filter"] = body.filter
+    if body.score_threshold is not None:
+        upstream_body["score_threshold"] = body.score_threshold
+
+    state: dict[str, Any] = {
+        "status_code": None,
+        "error_code": None,
+        "response_text": "",
+        "response_bytes": 0,
+    }
+
+    try:
+        try:
+            result = await pgvector_upstream.search(
+                session=session,
+                collection=body.collection,
+                vector=body.vector,
+                limit=body.limit,
+                filter=body.filter,
+                with_payload=body.with_payload,
+                score_threshold=body.score_threshold,
+            )
+        except ValueError as exc:
+            error_str = str(exc)
+            state["status_code"] = status.HTTP_400_BAD_REQUEST
+            state["error_code"] = error_str
+            state["response_text"] = json.dumps({"error": error_str})
+            state["response_bytes"] = len(state["response_text"].encode())
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": error_str},
+                headers={"X-Request-Id": str(request_id)},
+            )
+        except Exception as exc:
+            state["status_code"] = status.HTTP_500_INTERNAL_SERVER_ERROR
+            state["error_code"] = type(exc).__name__
+            log.exception("pgvector.search_failed")
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"error": "internal_error"},
+                headers={"X-Request-Id": str(request_id)},
+            )
+
+        state["status_code"] = status.HTTP_200_OK
+        state["response_text"] = json.dumps(result)
+        state["response_bytes"] = len(state["response_text"].encode())
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=result,
+            headers={"X-Request-Id": str(request_id)},
+        )
+
+    finally:
+        latency_ms = int((time.monotonic() - started) * 1000)
+        await _write_request_log(
+            session=session,
+            request=request,
+            request_id=request_id,
+            user=user,
+            endpoint_name="qdrant.search",
+            upstream_body=upstream_body,
+            response_text=state["response_text"],
+            response_bytes=state["response_bytes"],
+            status_code=state["status_code"],
+            error_code=state["error_code"],
+            latency_ms=latency_ms,
+            meta={
+                "collection": body.collection,
+                "limit": body.limit,
+                "backend": "pgvector",
+            },
+            max_body_bytes=settings.max_body_bytes,
+            chat_id=chat_id,
+            log=log,
+        )
+
+
+async def _pgvector_upsert(
+    *,
+    body: QdrantUpsertRequest,
+    request: Request,
+    user: User,
+    session: AsyncSession,
+    settings: Settings,
+    chat_id: str | None,
+) -> JSONResponse:
+    """Serve an upsert request from the local pgvector backend.
+
+    No httpx call, no ``app.state.qdrant_client``, no Qdrant credentials.
+    """
+    request_id = uuid4()
+    started = time.monotonic()
+    log = logger.bind(
+        request_id=str(request_id),
+        user_id=str(user.id),
+        endpoint="qdrant.upsert",
+    )
+
+    upstream_body: dict[str, Any] = {"points": body.points}
+
+    state: dict[str, Any] = {
+        "status_code": None,
+        "error_code": None,
+        "response_text": "",
+        "response_bytes": 0,
+    }
+
+    try:
+        try:
+            result = await pgvector_upstream.upsert(
+                session=session,
+                collection=body.collection,
+                points=body.points,
+            )
+        except ValueError as exc:
+            error_str = str(exc)
+            state["status_code"] = status.HTTP_400_BAD_REQUEST
+            state["error_code"] = error_str
+            state["response_text"] = json.dumps({"error": error_str})
+            state["response_bytes"] = len(state["response_text"].encode())
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": error_str},
+                headers={"X-Request-Id": str(request_id)},
+            )
+        except Exception as exc:
+            state["status_code"] = status.HTTP_500_INTERNAL_SERVER_ERROR
+            state["error_code"] = type(exc).__name__
+            log.exception("pgvector.upsert_failed")
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"error": "internal_error"},
+                headers={"X-Request-Id": str(request_id)},
+            )
+
+        state["status_code"] = status.HTTP_200_OK
+        state["response_text"] = json.dumps(result)
+        state["response_bytes"] = len(state["response_text"].encode())
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=result,
+            headers={"X-Request-Id": str(request_id)},
+        )
+
+    finally:
+        latency_ms = int((time.monotonic() - started) * 1000)
+        await _write_request_log(
+            session=session,
+            request=request,
+            request_id=request_id,
+            user=user,
+            endpoint_name="qdrant.upsert",
+            upstream_body=upstream_body,
+            response_text=state["response_text"],
+            response_bytes=state["response_bytes"],
+            status_code=state["status_code"],
+            error_code=state["error_code"],
+            latency_ms=latency_ms,
+            meta={
+                "collection": body.collection,
+                "point_count": len(body.points),
+                "backend": "pgvector",
+            },
+            max_body_bytes=settings.max_body_bytes,
+            chat_id=chat_id,
+            log=log,
+        )
