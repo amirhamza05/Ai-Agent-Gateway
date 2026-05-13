@@ -30,6 +30,7 @@ import secrets
 import uuid as _uuid
 from dataclasses import asdict
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -82,6 +83,22 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 _FLASH_SALT = "dashboard-flash"
 _PAGE_SIZE_DEFAULT = 50
 _PAGE_SIZE_MAX = 200
+
+# Cache-buster for /dashboard/static/* assets. Computed once at import time
+# from the dashboard.css mtime so browsers re-fetch CSS after every redeploy
+# (image rebuild → new mtime) without users needing a hard refresh.
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _compute_static_version() -> str:
+    try:
+        mtime = (_STATIC_DIR / "dashboard.css").stat().st_mtime
+        return str(int(mtime))
+    except OSError:
+        return "0"
+
+
+_STATIC_VERSION = _compute_static_version()
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +173,7 @@ def _base_context(request: Request, *, secret: str) -> dict[str, Any]:
         "flash": flash,
         "current_admin": user,
         "csrf_token": csrf_token,
+        "static_version": _STATIC_VERSION,
     }
     return ctx
 
@@ -217,7 +235,11 @@ async def get_login(request: Request) -> Response:
     return request.app.state.templates.TemplateResponse(
         request,
         "login.html",
-        {"request": request, "flash": _pop_flash(request, secret=settings.jwt_secret.get_secret_value())},
+        {
+            "request": request,
+            "flash": _pop_flash(request, secret=settings.jwt_secret.get_secret_value()),
+            "static_version": _STATIC_VERSION,
+        },
     )
 
 

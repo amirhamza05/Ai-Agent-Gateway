@@ -1,20 +1,27 @@
 {% extends "base.html" %}
-{% block title %}Error Report — GeoSWMM Admin{% endblock %}
+{% from "partials/icons.html" import icon %}
+{% block title %}Errors report — GeoSWMM Admin{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold text-gray-800 mb-2">Error Rate</h1>
+{% set range = request.query_params.get('range', '7d') %}
+<header class="page-header">
+  <div>
+    <h1>Errors</h1>
+    <p class="subtitle">Non-2xx responses, grouped by bucket.</p>
+  </div>
+  <div class="page-header__actions">
+    <div class="seg">
+      <a class="seg__opt" href="?range=24h" data-active="{{ 'true' if range == '24h' else 'false' }}">24h</a>
+      <a class="seg__opt" href="?range=7d"  data-active="{{ 'true' if range == '7d'  else 'false' }}">7d</a>
+      <a class="seg__opt" href="?range=30d" data-active="{{ 'true' if range == '30d' else 'false' }}">30d</a>
+    </div>
+  </div>
+</header>
 
-<div class="flex items-center space-x-2 mb-6">
-  <span class="text-sm text-gray-500">Range:</span>
-  <a href="?range=24h" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '7d') == '24h' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">24h</a>
-  <a href="?range=7d" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '7d') == '7d' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">7d</a>
-  <a href="?range=30d" class="px-3 py-1 rounded text-sm {% if request.query_params.get('range', '7d') == '30d' %}bg-blue-600 text-white{% else %}bg-gray-200 hover:bg-gray-300 text-gray-700{% endif %}">30d</a>
-</div>
-
-<div class="bg-white shadow rounded p-6 mb-4">
+<article class="card card--pad" style="margin-bottom: 22px;">
   <canvas id="errorsChart" height="80"></canvas>
-</div>
+</article>
 
-<div id="errorsTable" class="bg-white shadow rounded overflow-hidden"></div>
+<article class="card" id="errorsTable"></article>
 
 <script>
 const range = new URLSearchParams(location.search).get('range') || '7d';
@@ -22,7 +29,6 @@ const range = new URLSearchParams(location.search).get('range') || '7d';
   const resp = await fetch(`/dashboard/reports/errors.json?window=${range}`);
   const data = await resp.json();
 
-  // Aggregate by bucket
   const buckets = {};
   for (const d of data) {
     if (!buckets[d.bucket]) buckets[d.bucket] = { errors: 0, total: 0 };
@@ -33,57 +39,41 @@ const range = new URLSearchParams(location.search).get('range') || '7d';
   const errVals = labels.map(l => buckets[l].errors);
   const totalVals = labels.map(l => buckets[l].total);
 
-  const ctx = document.getElementById('errorsChart');
-  new Chart(ctx, {
+  new Chart(document.getElementById('errorsChart'), {
     type: 'line',
     data: {
       labels: labels.map(l => l.substring(0, 16)),
       datasets: [
-        {
-          label: 'Errors',
-          data: errVals,
-          borderColor: 'rgb(239, 68, 68)',
-          backgroundColor: 'rgba(239, 68, 68, 0.1)',
-          fill: true,
-          tension: 0.3,
-        },
-        {
-          label: 'Total',
-          data: totalVals,
-          borderColor: 'rgb(59, 130, 246)',
-          backgroundColor: 'rgba(59, 130, 246, 0.05)',
-          fill: true,
-          tension: 0.3,
-        }
+        { label: 'Errors', data: errVals, borderColor: '#B0432C', backgroundColor: 'rgba(176, 67, 44, 0.1)', fill: true, tension: 0.3, borderWidth: 1.5 },
+        { label: 'Total',  data: totalVals, borderColor: '#5B8266', backgroundColor: 'rgba(91, 130, 102, 0.06)', fill: true, tension: 0.3, borderWidth: 1.5 },
       ]
     },
     options: {
       responsive: true,
-      scales: { y: { beginAtZero: true } }
+      plugins: { legend: { labels: { color: '#3A332B' } } },
+      scales: {
+        y: { beginAtZero: true, grid: { color: '#EDE6DA' }, ticks: { color: '#6B6157', font: { family: 'JetBrains Mono', size: 10 } } },
+        x: { grid: { display: false }, ticks: { color: '#6B6157', font: { family: 'JetBrains Mono', size: 10 } } }
+      }
     }
   });
 
   if (data.length > 0) {
     const rows = data.map(d =>
-      `<tr class="hover:bg-gray-50 border-b border-gray-100">
-        <td class="px-4 py-2 text-sm text-gray-600">${d.bucket.substring(0, 16)}</td>
-        <td class="px-4 py-2 text-sm text-right text-red-600">${d.errors}</td>
-        <td class="px-4 py-2 text-sm text-right text-gray-700">${d.total}</td>
-        <td class="px-4 py-2 text-sm text-gray-500">${d.error_code || "—"}</td>
+      `<tr>
+        <td class="col-mono muted">${d.bucket.substring(0, 16)}</td>
+        <td class="col-num col-mono" style="color: var(--rust-500);">${d.errors}</td>
+        <td class="col-num col-mono">${d.total}</td>
+        <td class="muted">${d.error_code || "—"}</td>
       </tr>`
     ).join('');
     document.getElementById('errorsTable').innerHTML = `
-      <table class="w-full text-sm">
-        <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
-          <tr>
-            <th class="px-4 py-2 text-left">Bucket</th>
-            <th class="px-4 py-2 text-right">Errors</th>
-            <th class="px-4 py-2 text-right">Total</th>
-            <th class="px-4 py-2 text-left">Error Code</th>
-          </tr>
-        </thead>
+      <table class="tbl">
+        <thead><tr><th>Bucket</th><th class="col-num">Errors</th><th class="col-num">Total</th><th>Error code</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
+  } else {
+    document.getElementById('errorsTable').innerHTML = '<p class="tbl-empty">No errors in this period.</p>';
   }
 })();
 </script>

@@ -1,108 +1,102 @@
 {% extends "base.html" %}
-{% block title %}Request Logs — GeoSWMM Admin{% endblock %}
+{% from "partials/icons.html" import icon %}
+{% block title %}Request logs — GeoSWMM Admin{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold text-gray-800 mb-4">Request Logs</h1>
+<header class="page-header">
+  <div>
+    <h1>Logs</h1>
+    <p class="subtitle">Every gateway request, newest first.</p>
+  </div>
+</header>
 
-<!-- Filters -->
-<div class="bg-white shadow rounded p-4 mb-4">
-  <form method="get" action="/dashboard/logs" class="flex flex-wrap gap-3 items-end">
-    <div>
-      <label class="block text-xs text-gray-500 mb-1">User email</label>
-      <input type="text" name="user" value="{{ filters.user }}" placeholder="search..."
-             class="border border-gray-300 rounded px-2 py-1 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-blue-400">
-    </div>
-    <div>
-      <label class="block text-xs text-gray-500 mb-1">Endpoint</label>
-      <select name="endpoint"
-              class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
-        <option value="">All</option>
-        <option value="/v1/messages" {% if filters.endpoint == "/v1/messages" %}selected{% endif %}>/v1/messages</option>
-        <option value="/v1/embeddings" {% if filters.endpoint == "/v1/embeddings" %}selected{% endif %}>/v1/embeddings</option>
-        <option value="/v1/qdrant" {% if filters.endpoint == "/v1/qdrant" %}selected{% endif %}>/v1/qdrant</option>
-      </select>
-    </div>
-    <div>
-      <label class="block text-xs text-gray-500 mb-1">Model</label>
-      <input type="text" name="model" value="{{ filters.model }}" placeholder="search..."
-             class="border border-gray-300 rounded px-2 py-1 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-blue-400">
-    </div>
-    <div>
-      <label class="block text-xs text-gray-500 mb-1">Status code</label>
-      <input type="number" name="status" value="{{ filters.status }}" placeholder="e.g. 400"
-             class="border border-gray-300 rounded px-2 py-1 text-sm w-24 focus:outline-none focus:ring-1 focus:ring-blue-400">
-    </div>
-    <div>
-      <label class="block text-xs text-gray-500 mb-1">From (UTC)</label>
-      <input type="datetime-local" name="from_" value="{{ filters.from_ }}"
-             class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
-    </div>
-    <div>
-      <label class="block text-xs text-gray-500 mb-1">To (UTC)</label>
-      <input type="datetime-local" name="to" value="{{ filters.to }}"
-             class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
-    </div>
-    <div>
-      <label class="block text-xs text-gray-500 mb-1">Page size</label>
-      <select name="size"
-              class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
-        <option value="50" {% if size == 50 %}selected{% endif %}>50</option>
-        <option value="100" {% if size == 100 %}selected{% endif %}>100</option>
-        <option value="200" {% if size == 200 %}selected{% endif %}>200</option>
-      </select>
-    </div>
-    <div class="flex space-x-2">
-      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm">Filter</button>
-      <a href="/dashboard/logs" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-1.5 rounded text-sm">Reset</a>
-    </div>
-  </form>
-</div>
+<form method="get" action="/dashboard/logs" class="filter-strip" style="margin-bottom: 16px;">
+  <label class="field" style="flex: 0 0 180px;">
+    <span class="field__label">User</span>
+    <input class="field__input" type="text" name="user" value="{{ filters.user }}" placeholder="email substring…">
+  </label>
+  <label class="field" style="flex: 0 0 180px;">
+    <span class="field__label">Endpoint</span>
+    <select class="field__select" name="endpoint">
+      <option value="">All</option>
+      <option value="/v1/messages" {% if filters.endpoint == "/v1/messages" %}selected{% endif %}>/v1/messages</option>
+      <option value="/v1/embeddings" {% if filters.endpoint == "/v1/embeddings" %}selected{% endif %}>/v1/embeddings</option>
+      <option value="/v1/qdrant" {% if filters.endpoint == "/v1/qdrant" %}selected{% endif %}>/v1/qdrant</option>
+    </select>
+  </label>
+  <label class="field" style="flex: 0 0 160px;">
+    <span class="field__label">Model</span>
+    <input class="field__input" type="text" name="model" value="{{ filters.model }}" placeholder="search…">
+  </label>
+  <label class="field" style="flex: 0 0 120px;">
+    <span class="field__label">Status</span>
+    <input class="field__input mono" type="number" name="status" value="{{ filters.status }}" placeholder="e.g. 400">
+  </label>
+  <label class="field" style="flex: 0 0 220px;">
+    <span class="field__label">From (UTC)</span>
+    <input class="field__input" type="datetime-local" name="from_" value="{{ filters.from_ }}">
+  </label>
+  <label class="field" style="flex: 0 0 220px;">
+    <span class="field__label">To (UTC)</span>
+    <input class="field__input" type="datetime-local" name="to" value="{{ filters.to }}">
+  </label>
+  <label class="field" style="flex: 0 0 110px;">
+    <span class="field__label">Page size</span>
+    <select class="field__select" name="size">
+      <option value="50" {% if size == 50 %}selected{% endif %}>50</option>
+      <option value="100" {% if size == 100 %}selected{% endif %}>100</option>
+      <option value="200" {% if size == 200 %}selected{% endif %}>200</option>
+    </select>
+  </label>
+  <div style="display: flex; gap: 6px; align-self: flex-end;">
+    <button type="submit" class="btn btn--primary">{{ icon('filter') }} Filter</button>
+    <a class="btn btn--ghost" href="/dashboard/logs">Clear</a>
+  </div>
+</form>
 
-<div class="bg-white shadow rounded overflow-hidden">
-  <table class="w-full text-sm">
-    <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+<article class="card">
+  <table class="tbl">
+    <thead>
       <tr>
-        <th class="px-3 py-3 text-left">ID</th>
-        <th class="px-3 py-3 text-left">Time</th>
-        <th class="px-3 py-3 text-left">User</th>
-        <th class="px-3 py-3 text-left">Endpoint</th>
-        <th class="px-3 py-3 text-left">Model</th>
-        <th class="px-3 py-3 text-right">Status</th>
-        <th class="px-3 py-3 text-right">Latency</th>
-        <th class="px-3 py-3 text-right">Cost</th>
-        <th class="px-3 py-3"></th>
+        <th style="width: 90px;">ID</th>
+        <th style="width: 130px;">Time</th>
+        <th>User</th>
+        <th>Endpoint</th>
+        <th>Model</th>
+        <th class="col-num">Status</th>
+        <th class="col-num">Latency</th>
+        <th class="col-num">Cost</th>
+        <th></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-gray-100">
+    <tbody>
       {% for row in log_rows %}
-      <tr class="hover:bg-gray-50">
-        <td class="px-3 py-2 text-gray-400 text-xs">{{ row.id }}</td>
-        <td class="px-3 py-2 text-gray-500 text-xs whitespace-nowrap">{{ row.created_at | relative_time }}</td>
-        <td class="px-3 py-2 text-gray-700 text-xs">{{ row.user_email or "—" }}</td>
-        <td class="px-3 py-2 text-gray-700 text-xs">{{ row.endpoint }}</td>
-        <td class="px-3 py-2 text-gray-600 text-xs">{{ row.model or "—" }}</td>
-        <td class="px-3 py-2 text-right">
-          <span class="{% if row.status_code and row.status_code >= 400 %}text-red-600{% else %}text-gray-700{% endif %} text-xs">
-            {{ row.status_code or "—" }}
-          </span>
+      <tr>
+        <td class="col-mono muted">{{ row.id }}</td>
+        <td class="col-mono muted nowrap">{{ row.created_at | relative_time }}</td>
+        <td>{{ row.user_email or "—" }}</td>
+        <td class="col-mono">{{ row.endpoint }}</td>
+        <td class="col-mono muted">{{ row.model or "—" }}</td>
+        <td class="col-num">
+          {% set sc = row.status_code or 0 %}
+          {% if sc >= 500 %}<span class="chip chip--rust">{{ sc }}</span>
+          {% elif sc >= 400 %}<span class="chip chip--amber">{{ sc }}</span>
+          {% elif sc >= 200 %}<span class="muted mono">{{ sc }}</span>
+          {% else %}<span class="dim">—</span>{% endif %}
         </td>
-        <td class="px-3 py-2 text-right text-gray-600 text-xs">
-          {{ row.latency_ms ~ " ms" if row.latency_ms else "—" }}
+        <td class="col-num col-mono" style="{% if row.latency_ms and row.latency_ms > 4000 %}color: var(--amber-500);{% endif %}">{{ row.latency_ms ~ " ms" if row.latency_ms else "—" }}</td>
+        <td class="col-num col-mono">
+          {% if row.cost_usd %}${{ "%.6f"|format(row.cost_usd|float) }}{% else %}<span class="dim">—</span>{% endif %}
         </td>
-        <td class="px-3 py-2 text-right text-gray-600 text-xs">
-          {% if row.cost_usd %}${{ "%.6f"|format(row.cost_usd|float) }}{% else %}—{% endif %}
-        </td>
-        <td class="px-3 py-2 text-right">
-          <a href="/dashboard/logs/{{ row.id }}" class="text-blue-600 hover:underline text-xs">View</a>
+        <td class="col-actions">
+          <a class="btn btn--ghost btn--sm" href="/dashboard/logs/{{ row.id }}">View</a>
         </td>
       </tr>
       {% else %}
-      <tr>
-        <td colspan="9" class="px-4 py-8 text-center text-gray-400">No log entries found.</td>
-      </tr>
+      <tr><td colspan="9" class="tbl-empty">No log entries found.</td></tr>
       {% endfor %}
     </tbody>
   </table>
-</div>
+</article>
 
 {% set base_url = "/dashboard/logs" %}
 {% include "partials/pagination.html" %}

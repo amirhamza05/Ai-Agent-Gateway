@@ -1,51 +1,47 @@
 {% extends "base.html" %}
+{% from "partials/icons.html" import icon %}
 {% block title %}Settings — GeoSWMM Admin{% endblock %}
-
 {% block content %}
-<div class="max-w-2xl">
-  <h1 class="text-2xl font-bold mb-6">Gateway Settings</h1>
+<header class="page-header">
+  <div>
+    <h1>Settings</h1>
+    <p class="subtitle">Gateway-wide configuration. Changes apply within 30 seconds on all workers.</p>
+  </div>
+</header>
 
-  <form method="post" action="/dashboard/settings">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<form method="post" action="/dashboard/settings" style="max-width: 760px;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <!-- OpenRouter -->
-    <section class="bg-white rounded-lg shadow p-6 mb-6">
-      <h2 class="text-lg font-semibold mb-4">OpenRouter</h2>
+  <article class="card card--pad" style="margin-bottom: 18px;">
+    <div class="section-label" style="margin-bottom: 14px;">OpenRouter</div>
 
-      <div class="mb-4">
-        <label class="block text-sm font-medium text-gray-700 mb-1">
-          API Key
+    <div class="settings-row" style="border-bottom: none; padding: 0;">
+      <div>
+        <div class="settings-row__label">API key
           {% if source[SETTING_OPENROUTER_KEY] == 'db' %}
-            <span class="ml-2 text-xs font-normal bg-green-100 text-green-700 px-2 py-0.5 rounded">saved in DB</span>
+            <span class="chip chip--sage" style="margin-left: 8px;">from DB</span>
           {% elif source[SETTING_OPENROUTER_KEY] == 'env' %}
-            <span class="ml-2 text-xs font-normal bg-blue-100 text-blue-700 px-2 py-0.5 rounded">from env var</span>
+            <span class="chip chip--clay" style="margin-left: 8px;">from env</span>
           {% else %}
-            <span class="ml-2 text-xs font-normal bg-red-100 text-red-700 px-2 py-0.5 rounded">not set</span>
+            <span class="chip chip--rust" style="margin-left: 8px;">not set</span>
           {% endif %}
-        </label>
-        {% if display[SETTING_OPENROUTER_KEY] %}
-          <p class="text-xs text-gray-500 mb-1">Current: <code class="font-mono">{{ display[SETTING_OPENROUTER_KEY] }}</code></p>
-        {% endif %}
-        <input
-          type="password"
-          name="{{ SETTING_OPENROUTER_KEY }}"
-          autocomplete="new-password"
-          placeholder="sk-or-… (leave blank to keep existing)"
-          class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-        >
-        <p class="text-xs text-gray-400 mt-1">Leave blank to keep the existing value. Overrides the <code>OPENROUTER_API_KEY</code> env var when set here.</p>
+        </div>
+        <div class="settings-row__hint">Used when routing to upstream providers. Overrides <code class="mono">OPENROUTER_API_KEY</code> env var when set here.</div>
       </div>
-    </section>
-
-    <div class="flex items-center gap-4">
-      <button
-        type="submit"
-        class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-5 py-2 rounded"
-      >
-        Save Settings
-      </button>
-      <p class="text-xs text-gray-500">Only filled fields will be updated. Changes take effect within 30 seconds on all workers.</p>
+      <div class="settings-row__ctrl" style="flex-direction: column; align-items: stretch;">
+        {% if display[SETTING_OPENROUTER_KEY] %}
+          <p class="muted" style="font-size: 12px; margin: 0 0 6px;">Current: <code class="mono">{{ display[SETTING_OPENROUTER_KEY] }}</code></p>
+        {% endif %}
+        <input class="field__input mono" type="password" name="{{ SETTING_OPENROUTER_KEY }}"
+               autocomplete="new-password" placeholder="sk-or-… (leave blank to keep existing)">
+        <span class="field__hint">Leave blank to keep the existing value.</span>
+      </div>
     </div>
-  </form>
-</div>
+  </article>
+
+  <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+    <button type="submit" class="btn btn--primary">Save settings</button>
+    <p class="muted" style="margin: 0; font-size: 12px;">Only filled fields will be updated.</p>
+  </div>
+</form>
 {% endblock %}

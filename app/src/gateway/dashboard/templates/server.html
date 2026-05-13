@@ -1,246 +1,187 @@
 {% extends "base.html" %}
+{% from "partials/icons.html" import icon %}
 {% block title %}Server — GeoSWMM Admin{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold text-gray-800">Server status</h1>
-  <button onclick="window.location.reload()"
-          class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded text-sm font-medium">
-    Refresh
-  </button>
-</div>
+<header class="page-header">
+  <div>
+    <h1>Server</h1>
+    <p class="subtitle">Process, dependencies, and storage.</p>
+  </div>
+  <div class="page-header__actions">
+    <button class="btn btn--secondary" onclick="window.location.reload()">{{ icon('refresh') }} Refresh</button>
+  </div>
+</header>
 
-{# ----- Top KPI strip ----- #}
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-  <div class="bg-white shadow rounded p-5">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Uptime (worker)</div>
-    <div class="text-2xl font-bold text-gray-800">{{ uptime.human }}</div>
-    <div class="text-xs text-gray-400 mt-1">v{{ gateway_version }}</div>
-  </div>
-  <div class="bg-white shadow rounded p-5">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Database size</div>
-    <div class="text-2xl font-bold text-gray-800">{{ db_summary.db_bytes | fmt_bytes }}</div>
-    <div class="text-xs text-gray-400 mt-1">{{ db_summary.table_count }} tables</div>
-  </div>
-  <div class="bg-white shadow rounded p-5">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">DB connections</div>
-    <div class="text-2xl font-bold text-gray-800">{{ connections.total }}</div>
-    <div class="text-xs text-gray-400 mt-1">
+<section class="grid-4" style="margin-bottom: 22px;">
+  <article class="kpi">
+    <div class="kpi__label">Uptime (worker)</div>
+    <div class="kpi__value">{{ uptime.human }}</div>
+    <div class="kpi__sub mono">v{{ gateway_version }}</div>
+  </article>
+  <article class="kpi">
+    <div class="kpi__label">Database size</div>
+    <div class="kpi__value">{{ db_summary.db_bytes | fmt_bytes }}</div>
+    <div class="kpi__sub">{{ db_summary.table_count }} tables</div>
+  </article>
+  <article class="kpi">
+    <div class="kpi__label">DB connections</div>
+    <div class="kpi__value">{{ connections.total }}</div>
+    <div class="kpi__sub">
       {{ connections.active }} active · {{ connections.idle }} idle
-      {% if connections.idle_in_tx %}· <span class="text-amber-600">{{ connections.idle_in_tx }} idle-in-tx</span>{% endif %}
+      {% if connections.idle_in_tx %}· <span style="color: var(--amber-500);">{{ connections.idle_in_tx }} idle-in-tx</span>{% endif %}
     </div>
-  </div>
-  <div class="bg-white shadow rounded p-5">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache hit ratio</div>
-    <div class="text-2xl font-bold {% if cache.hit_ratio >= 0.99 %}text-green-700{% elif cache.hit_ratio >= 0.95 %}text-amber-600{% else %}text-red-600{% endif %}">
+  </article>
+  <article class="kpi">
+    <div class="kpi__label">Cache hit ratio</div>
+    <div class="kpi__value" style="{% if cache.hit_ratio >= 0.99 %}color: var(--sage-500);{% elif cache.hit_ratio >= 0.95 %}color: var(--amber-500);{% else %}color: var(--rust-500);{% endif %}">
       {{ "%.2f"|format(cache.hit_ratio * 100) }}%
     </div>
-    <div class="text-xs text-gray-400 mt-1">{{ cache.blks_hit }} hit / {{ cache.blks_read }} read</div>
-  </div>
-</div>
+    <div class="kpi__sub mono">{{ "{:,}".format(cache.blks_hit) }} hit / {{ "{:,}".format(cache.blks_read) }} read</div>
+  </article>
+</section>
 
-{# ----- Host disk ----- #}
-<div class="bg-white shadow rounded p-5 mb-6">
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="text-sm font-semibold text-gray-700">Host disk ({{ disk.path if disk else "/" }})</h2>
-    {% if disk %}
-      <span class="text-xs text-gray-500">{{ disk.used | fmt_bytes }} used of {{ disk.total | fmt_bytes }}</span>
-    {% endif %}
+<article class="card card--pad" style="margin-bottom: 22px;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+    <span class="section-label">Host disk · {{ disk.path if disk else "/" }}</span>
+    {% if disk %}<span class="muted mono" style="font-size: 12px;">{{ disk.used | fmt_bytes }} / {{ disk.total | fmt_bytes }} · {{ disk.used_percent }}%</span>{% endif %}
   </div>
   {% if disk %}
-    <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-      <div class="h-3 {% if disk.used_percent >= 90 %}bg-red-500{% elif disk.used_percent >= 75 %}bg-amber-500{% else %}bg-blue-500{% endif %}"
-           style="width: {{ disk.used_percent }}%"></div>
+    <div class="bar" style="height: 14px;">
+      <div class="bar__fill {% if disk.used_percent >= 90 %}bar__fill--err{% elif disk.used_percent >= 75 %}bar__fill--warn{% endif %}" style="width: {{ disk.used_percent }}%;"></div>
     </div>
-    <div class="grid grid-cols-3 gap-4 mt-3 text-sm">
-      <div>
-        <div class="text-xs text-gray-500">Used</div>
-        <div class="font-medium text-gray-800">{{ disk.used | fmt_bytes }} ({{ disk.used_percent }}%)</div>
-      </div>
-      <div>
-        <div class="text-xs text-gray-500">Free</div>
-        <div class="font-medium text-gray-800">{{ disk.free | fmt_bytes }}</div>
-      </div>
-      <div>
-        <div class="text-xs text-gray-500">Total</div>
-        <div class="font-medium text-gray-800">{{ disk.total | fmt_bytes }}</div>
-      </div>
+    <div class="grid-3" style="margin-top: 14px; font-size: 13px;">
+      <div><div class="muted" style="font-size: 11px;">Used</div><div class="mono" style="margin-top: 2px;">{{ disk.used | fmt_bytes }} ({{ disk.used_percent }}%)</div></div>
+      <div><div class="muted" style="font-size: 11px;">Free</div><div class="mono" style="margin-top: 2px;">{{ disk.free | fmt_bytes }}</div></div>
+      <div><div class="muted" style="font-size: 11px;">Total</div><div class="mono" style="margin-top: 2px;">{{ disk.total | fmt_bytes }}</div></div>
     </div>
-    <p class="text-xs text-gray-400 mt-3">
+    <p class="muted" style="font-size: 12px; margin: 14px 0 0;">
       Reports the container's root filesystem. On a single-VPS Compose deploy this maps to the host disk shared with Postgres / Redis volumes.
     </p>
   {% else %}
-    <p class="text-sm text-gray-400">Disk usage unavailable.</p>
+    <p class="muted">Disk usage unavailable.</p>
   {% endif %}
-</div>
+</article>
 
-{# ----- DB tables ----- #}
-<div class="bg-white shadow rounded mb-6 overflow-hidden">
-  <div class="px-5 py-3 border-b border-gray-100">
-    <h2 class="text-sm font-semibold text-gray-700">Tables — size breakdown</h2>
-    <p class="text-xs text-gray-500 mt-1">Postgres TOAST stores compressed bodies for <code>request_log</code>; expect that row to dominate.</p>
+<article class="card" style="margin-bottom: 22px;">
+  <div style="padding: 14px 18px; border-bottom: 1px solid var(--paper-200);">
+    <div class="section-label">Tables — size breakdown</div>
+    <p class="muted" style="font-size: 12px; margin: 4px 0 0;">Postgres TOAST stores compressed bodies for <code class="mono">request_log</code>; expect that row to dominate.</p>
   </div>
-  <table class="w-full text-sm">
-    <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+  <table class="tbl">
+    <thead>
       <tr>
-        <th class="px-4 py-3 text-left">Table</th>
-        <th class="px-4 py-3 text-right">Rows (est)</th>
-        <th class="px-4 py-3 text-right">Heap</th>
-        <th class="px-4 py-3 text-right">TOAST</th>
-        <th class="px-4 py-3 text-right">Indexes</th>
-        <th class="px-4 py-3 text-right">Total</th>
+        <th>Table</th>
+        <th class="col-num">Rows (est)</th>
+        <th class="col-num">Heap</th>
+        <th class="col-num">TOAST</th>
+        <th class="col-num">Indexes</th>
+        <th class="col-num">Total</th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-gray-100">
+    <tbody>
       {% for t in tables %}
-      <tr class="hover:bg-gray-50">
-        <td class="px-4 py-3 font-medium text-gray-800">{{ t.name }}</td>
-        <td class="px-4 py-3 text-right text-gray-700">{{ "{:,}".format(t.row_estimate) }}</td>
-        <td class="px-4 py-3 text-right text-gray-700">{{ t.table_bytes | fmt_bytes }}</td>
-        <td class="px-4 py-3 text-right text-gray-700">{{ t.toast_bytes | fmt_bytes }}</td>
-        <td class="px-4 py-3 text-right text-gray-700">{{ t.index_bytes | fmt_bytes }}</td>
-        <td class="px-4 py-3 text-right font-semibold text-gray-800">{{ t.total_bytes | fmt_bytes }}</td>
+      <tr>
+        <td class="col-mono" style="font-weight: 500;">{{ t.name }}</td>
+        <td class="col-num col-mono muted">{{ "{:,}".format(t.row_estimate) }}</td>
+        <td class="col-num col-mono">{{ t.table_bytes | fmt_bytes }}</td>
+        <td class="col-num col-mono">{{ t.toast_bytes | fmt_bytes }}</td>
+        <td class="col-num col-mono">{{ t.index_bytes | fmt_bytes }}</td>
+        <td class="col-num col-mono" style="font-weight: 600;">{{ t.total_bytes | fmt_bytes }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="px-4 py-8 text-center text-gray-400">No tables found.</td></tr>
+      <tr><td colspan="6" class="tbl-empty">No tables found.</td></tr>
       {% endfor %}
     </tbody>
   </table>
-</div>
+</article>
 
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-  {# ----- Largest request_log rows ----- #}
-  <div class="bg-white shadow rounded overflow-hidden">
-    <div class="px-5 py-3 border-b border-gray-100">
-      <h2 class="text-sm font-semibold text-gray-700">Largest request_log rows</h2>
-      <p class="text-xs text-gray-500 mt-1">Combined request + response bytes (original size, pre-truncation).</p>
+<div class="grid-2" style="margin-bottom: 22px;">
+  <article class="card">
+    <div style="padding: 14px 18px; border-bottom: 1px solid var(--paper-200);">
+      <div class="section-label">Largest request_log rows</div>
+      <p class="muted" style="font-size: 12px; margin: 4px 0 0;">Combined request + response bytes (original size, pre-truncation).</p>
     </div>
-    <table class="w-full text-sm">
-      <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+    <table class="tbl">
+      <thead>
         <tr>
-          <th class="px-3 py-2 text-left">When</th>
-          <th class="px-3 py-2 text-left">Endpoint</th>
-          <th class="px-3 py-2 text-left">User</th>
-          <th class="px-3 py-2 text-right">Size</th>
+          <th>When</th>
+          <th>Endpoint</th>
+          <th>User</th>
+          <th class="col-num">Size</th>
         </tr>
       </thead>
-      <tbody class="divide-y divide-gray-100">
+      <tbody>
         {% for r in top_rows %}
-        <tr class="hover:bg-gray-50">
-          <td class="px-3 py-2 text-gray-500">
-            <a href="/dashboard/logs/{{ r.log_id }}" class="text-blue-600 hover:underline">
-              {{ r.created_at | relative_time }}
-            </a>
+        <tr>
+          <td class="col-mono muted">
+            <a href="/dashboard/logs/{{ r.log_id }}" style="color: var(--accent-600);">{{ r.created_at | relative_time }}</a>
           </td>
-          <td class="px-3 py-2 text-gray-700 truncate max-w-32">{{ r.endpoint or "—" }}</td>
-          <td class="px-3 py-2 text-gray-700 truncate max-w-40">{{ r.user_email or "—" }}</td>
-          <td class="px-3 py-2 text-right font-semibold text-gray-800">{{ r.total_bytes | fmt_bytes }}</td>
+          <td class="col-mono truncate" style="max-width: 140px;">{{ r.endpoint or "—" }}</td>
+          <td class="truncate" style="max-width: 160px;">{{ r.user_email or "—" }}</td>
+          <td class="col-num col-mono" style="font-weight: 600;">{{ r.total_bytes | fmt_bytes }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="4" class="px-3 py-6 text-center text-gray-400">No log rows yet.</td></tr>
+        <tr><td colspan="4" class="tbl-empty">No log rows yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>
-  </div>
+  </article>
 
-  {# ----- Redis ----- #}
-  <div class="bg-white shadow rounded overflow-hidden">
-    <div class="px-5 py-3 border-b border-gray-100">
-      <h2 class="text-sm font-semibold text-gray-700">Redis</h2>
-      <p class="text-xs text-gray-500 mt-1">Rate-limit buckets, refresh-token blocklist, and idempotency keys.</p>
+  <article class="card">
+    <div style="padding: 14px 18px; border-bottom: 1px solid var(--paper-200);">
+      <div class="section-label">Redis</div>
+      <p class="muted" style="font-size: 12px; margin: 4px 0 0;">Rate-limit buckets, refresh-token blocklist, idempotency keys.</p>
     </div>
     {% if redis_info %}
-    <div class="p-5 space-y-3">
-      <div class="grid grid-cols-2 gap-4 text-sm">
-        <div>
-          <div class="text-xs text-gray-500">Memory used</div>
-          <div class="font-medium text-gray-800">{{ redis_info.used_memory | fmt_bytes }}</div>
-        </div>
-        <div>
-          <div class="text-xs text-gray-500">Peak</div>
-          <div class="font-medium text-gray-800">{{ redis_info.used_memory_peak | fmt_bytes }}</div>
-        </div>
-        <div>
-          <div class="text-xs text-gray-500">Maxmemory</div>
-          <div class="font-medium text-gray-800">
-            {% if redis_info.maxmemory %}{{ redis_info.maxmemory | fmt_bytes }}{% else %}unlimited{% endif %}
-          </div>
-        </div>
-        <div>
-          <div class="text-xs text-gray-500">Fragmentation</div>
-          <div class="font-medium text-gray-800">{{ "%.2f"|format(redis_info.fragmentation_ratio) }}×</div>
-        </div>
-        <div>
-          <div class="text-xs text-gray-500">Total keys</div>
-          <div class="font-medium text-gray-800">{{ "{:,}".format(redis_info.dbsize) }}</div>
-        </div>
-        <div>
-          <div class="text-xs text-gray-500">Connected clients</div>
-          <div class="font-medium text-gray-800">{{ redis_info.connected_clients }}</div>
-        </div>
-        <div>
-          <div class="text-xs text-gray-500">Evicted keys</div>
-          <div class="font-medium {% if redis_info.evicted_keys > 0 %}text-amber-600{% else %}text-gray-800{% endif %}">
-            {{ "{:,}".format(redis_info.evicted_keys) }}
-          </div>
-        </div>
-        <div>
-          <div class="text-xs text-gray-500">Hit ratio</div>
-          <div class="font-medium text-gray-800">
+    <div style="padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+      <div class="grid-2" style="font-size: 13px;">
+        <div><div class="muted" style="font-size: 11px;">Memory used</div><div class="mono" style="margin-top: 2px;">{{ redis_info.used_memory | fmt_bytes }}</div></div>
+        <div><div class="muted" style="font-size: 11px;">Peak</div><div class="mono" style="margin-top: 2px;">{{ redis_info.used_memory_peak | fmt_bytes }}</div></div>
+        <div><div class="muted" style="font-size: 11px;">Maxmemory</div><div class="mono" style="margin-top: 2px;">{% if redis_info.maxmemory %}{{ redis_info.maxmemory | fmt_bytes }}{% else %}unlimited{% endif %}</div></div>
+        <div><div class="muted" style="font-size: 11px;">Fragmentation</div><div class="mono" style="margin-top: 2px;">{{ "%.2f"|format(redis_info.fragmentation_ratio) }}×</div></div>
+        <div><div class="muted" style="font-size: 11px;">Total keys</div><div class="mono" style="margin-top: 2px;">{{ "{:,}".format(redis_info.dbsize) }}</div></div>
+        <div><div class="muted" style="font-size: 11px;">Connected clients</div><div class="mono" style="margin-top: 2px;">{{ redis_info.connected_clients }}</div></div>
+        <div><div class="muted" style="font-size: 11px;">Evicted keys</div><div class="mono" style="margin-top: 2px; {% if redis_info.evicted_keys > 0 %}color: var(--amber-500);{% endif %}">{{ "{:,}".format(redis_info.evicted_keys) }}</div></div>
+        <div><div class="muted" style="font-size: 11px;">Hit ratio</div>
+          <div class="mono" style="margin-top: 2px;">
             {% set total_lookups = redis_info.keyspace_hits + redis_info.keyspace_misses %}
-            {% if total_lookups > 0 %}
-              {{ "%.1f"|format(redis_info.keyspace_hits * 100.0 / total_lookups) }}%
-            {% else %}
-              —
-            {% endif %}
+            {% if total_lookups > 0 %}{{ "%.1f"|format(redis_info.keyspace_hits * 100.0 / total_lookups) }}%{% else %}—{% endif %}
           </div>
         </div>
       </div>
-      <div class="border-t border-gray-100 pt-3">
-        <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">Keys by prefix</div>
-        <div class="space-y-1 text-sm">
+      <div style="padding-top: 12px; border-top: 1px solid var(--paper-200);">
+        <div class="section-label" style="margin-bottom: 8px;">Keys by prefix</div>
+        <div style="display: flex; flex-direction: column; gap: 4px; font-size: 13px;">
           {% for label, count in redis_info.keys_by_prefix.items() %}
-          <div class="flex justify-between">
-            <span class="text-gray-700">{{ label }}</span>
-            <span class="font-medium text-gray-800">{{ "{:,}".format(count) }}</span>
+          <div style="display: flex; justify-content: space-between;">
+            <span>{{ label }}</span>
+            <span class="mono">{{ "{:,}".format(count) }}</span>
           </div>
           {% endfor %}
         </div>
       </div>
     </div>
     {% else %}
-    <div class="p-5 text-sm text-gray-400">Redis unavailable.</div>
+    <p class="muted" style="padding: 16px;">Redis unavailable.</p>
     {% endif %}
-  </div>
+  </article>
 </div>
 
-{# ----- DB activity detail ----- #}
-<div class="bg-white shadow rounded p-5 mb-6">
-  <h2 class="text-sm font-semibold text-gray-700 mb-3">Postgres activity</h2>
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-    <div>
-      <div class="text-xs text-gray-500">Active queries</div>
-      <div class="font-medium text-gray-800">{{ connections.active }}</div>
+<article class="card card--pad" style="margin-bottom: 22px;">
+  <div class="section-label" style="margin-bottom: 12px;">Postgres activity</div>
+  <div class="grid-4" style="font-size: 13px;">
+    <div><div class="muted" style="font-size: 11px;">Active queries</div><div class="mono" style="margin-top: 2px;">{{ connections.active }}</div></div>
+    <div><div class="muted" style="font-size: 11px;">Idle</div><div class="mono" style="margin-top: 2px;">{{ connections.idle }}</div></div>
+    <div><div class="muted" style="font-size: 11px;">Idle in transaction</div>
+      <div class="mono" style="margin-top: 2px; {% if connections.idle_in_tx > 0 %}color: var(--amber-500);{% endif %}">{{ connections.idle_in_tx }}</div>
     </div>
-    <div>
-      <div class="text-xs text-gray-500">Idle</div>
-      <div class="font-medium text-gray-800">{{ connections.idle }}</div>
-    </div>
-    <div>
-      <div class="text-xs text-gray-500">Idle in transaction</div>
-      <div class="font-medium {% if connections.idle_in_tx > 0 %}text-amber-600{% else %}text-gray-800{% endif %}">
-        {{ connections.idle_in_tx }}
-      </div>
-    </div>
-    <div>
-      <div class="text-xs text-gray-500">Longest active query</div>
-      <div class="font-medium {% if connections.max_query_seconds > 30 %}text-amber-600{% else %}text-gray-800{% endif %}">
-        {{ "%.1f"|format(connections.max_query_seconds) }}s
-      </div>
+    <div><div class="muted" style="font-size: 11px;">Longest active query</div>
+      <div class="mono" style="margin-top: 2px; {% if connections.max_query_seconds > 30 %}color: var(--amber-500);{% endif %}">{{ "%.1f"|format(connections.max_query_seconds) }}s</div>
     </div>
   </div>
-</div>
+</article>
 
-<p class="text-xs text-gray-400">
-  Snapshot at page-load time. Container stdout logs (request JSON lines from structlog) are managed by Docker and not visible from inside the app container — use <code>docker compose logs app</code> on the host.
+<p class="muted" style="font-size: 12px;">
+  Snapshot at page-load time. Container stdout logs (structlog JSON) are managed by Docker — use <code class="mono">docker compose logs app</code> on the host.
 </p>
 {% endblock %}

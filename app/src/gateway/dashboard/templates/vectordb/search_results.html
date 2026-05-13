@@ -1,41 +1,47 @@
 {% if results is not none %}
   {% if results %}
-    <div class="bg-white shadow rounded overflow-hidden">
-      <div class="px-4 py-3 bg-gray-50 border-b text-sm text-gray-600 font-medium">
-        {{ results | length }} result(s) returned
+    <article class="card">
+      <div style="padding: 12px var(--row-px); background: var(--paper-100); border-bottom: 1px solid var(--paper-200);">
+        <span class="section-label">{{ results | length }} result(s) returned</span>
       </div>
-      <table class="w-full text-sm">
-        <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+      <table class="tbl">
+        <thead>
           <tr>
-            <th class="px-4 py-3 text-left">Point ID</th>
-            <th class="px-4 py-3 text-right">Score</th>
-            <th class="px-4 py-3 text-left">Text (preview)</th>
+            <th>Point ID</th>
+            <th class="col-num">Score</th>
+            <th>Text preview</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-gray-100">
+        <tbody>
           {% for hit in results %}
-          <tr class="hover:bg-gray-50">
-            <td class="px-4 py-2 text-gray-600 text-xs font-mono">{{ hit.id }}</td>
-            <td class="px-4 py-2 text-right text-gray-700 text-xs">
-              {{ "%.4f" | format(hit.score | float) }}
+          <tr>
+            <td class="col-mono muted">{{ hit.id }}</td>
+            <td class="col-num">
+              {% set pct = ((hit.score|float) * 100)|round %}
+              <div style="display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end;">
+                <div style="width: 60px; height: 4px; background: var(--paper-200); border-radius: 999px; overflow: hidden;">
+                  <div style="width: {{ pct }}%; height: 100%; background: var(--accent-500);"></div>
+                </div>
+                <span class="mono" style="font-size: 12px;">{{ "%.4f"|format(hit.score|float) }}</span>
+              </div>
             </td>
-            <td class="px-4 py-2 text-gray-700 text-xs max-w-sm truncate">
+            <td style="max-width: 480px;">
               {% if hit.payload and hit.payload.text %}
-                {{ hit.payload.text[:120] }}{% if hit.payload.text | length > 120 %}…{% endif %}
+                <div class="truncate">{{ hit.payload.text[:160] }}{% if hit.payload.text|length > 160 %}…{% endif %}</div>
               {% elif hit.payload %}
-                <span class="text-gray-400 font-mono">{{ hit.payload | tojson }}</span>
+                <span class="dim mono" style="font-size: 11px;">{{ hit.payload | tojson }}</span>
               {% else %}
-                <span class="text-gray-400">—</span>
+                <span class="dim">—</span>
               {% endif %}
             </td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
-    </div>
+    </article>
   {% else %}
-    <div class="bg-white shadow rounded p-6 text-center text-gray-400 text-sm">
+    <article class="card card--pad" style="text-align: center; color: var(--ink-500);">
       No results found for this query in the specified collection.
-    </div>
+    </article>
   {% endif %}
 {% endif %}

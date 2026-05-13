@@ -1,81 +1,58 @@
 {% extends "base.html" %}
-{% block title %}{% if row %}Edit Embedding — GeoSWMM Admin{% else %}New Embedding — GeoSWMM Admin{% endif %}{% endblock %}
+{% from "partials/icons.html" import icon %}
+{% block title %}{% if row %}Edit embedding{% else %}New embedding{% endif %} — GeoSWMM Admin{% endblock %}
 {% block content %}
-<div class="max-w-2xl">
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-2xl font-bold text-gray-800">
-      {% if row %}Edit Embedding #{{ row.id }}{% else %}New Embedding{% endif %}
-    </h1>
-    <a href="/dashboard/vectordb" class="text-sm text-blue-600 hover:underline">Back to list</a>
+<header class="page-header">
+  <div>
+    <h1>{% if row %}Edit embedding{% else %}New embedding{% endif %}</h1>
+    {% if row %}
+      <p class="subtitle mono" style="font-family: var(--font-mono);">#{{ row.id }} · {{ row.collection }}</p>
+    {% else %}
+      <p class="subtitle">Add text — the gateway embeds it on save with <code class="mono">openai/text-embedding-3-small</code>.</p>
+    {% endif %}
   </div>
+  <div class="page-header__actions">
+    <a class="btn btn--ghost" href="/dashboard/vectordb">← Vector DB</a>
+  </div>
+</header>
 
-  <form method="post" action="{{ action }}">
+<article class="card card--pad" style="max-width: 720px;">
+  <form method="post" action="{{ action }}" class="col" style="gap: 18px;">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-    <div class="bg-white shadow rounded-lg p-6 space-y-5">
+    <label class="field">
+      <span class="field__label">Collection <span class="field__required">*</span></span>
+      <input class="field__input mono" type="text" name="collection"
+             value="{{ form_values.collection or '' }}" required
+             pattern="^[A-Za-z0-9_\-]{1,64}$"
+             title="1–64 characters: letters, digits, underscore, hyphen"
+             placeholder="e.g. geoswmm_docs">
+      <span class="field__hint">Letters, digits, underscore and hyphen only. 1–64 chars.</span>
+    </label>
 
-      <!-- Collection -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">
-          Collection <span class="text-red-500">*</span>
-        </label>
-        <input
-          type="text"
-          name="collection"
-          value="{{ form_values.collection or '' }}"
-          required
-          pattern="^[A-Za-z0-9_\-]{1,64}$"
-          title="1–64 characters: letters, digits, underscore, hyphen"
-          placeholder="e.g. geoswmm_docs"
-          class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-        >
-        <p class="text-xs text-gray-400 mt-1">Letters, digits, underscore and hyphen only. 1–64 chars.</p>
-      </div>
+    <label class="field">
+      <span class="field__label">Point ID <span class="muted" style="text-transform: none; letter-spacing: 0;">(optional — auto-generated UUID4 if blank)</span></span>
+      <input class="field__input mono" type="text" name="point_id"
+             value="{{ form_values.point_id or '' }}"
+             placeholder="leave blank to auto-generate">
+      <span class="field__hint">Upsert key is (collection, point_id). Changing either creates a new row.</span>
+    </label>
 
-      <!-- Point ID -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">
-          Point ID <span class="text-gray-400">(optional — auto-generated UUID4 if blank)</span>
-        </label>
-        <input
-          type="text"
-          name="point_id"
-          value="{{ form_values.point_id or '' }}"
-          placeholder="leave blank to auto-generate"
-          class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
-        >
-        <p class="text-xs text-gray-400 mt-1">Upsert key is (collection, point_id). Changing either creates a new row.</p>
-      </div>
+    <label class="field">
+      <span class="field__label">Text <span class="field__required">*</span></span>
+      <textarea class="field__textarea" name="text" rows="8" required
+                placeholder="The document text to embed…"
+                style="resize: vertical; line-height: 1.55;">{{ form_values.text or '' }}</textarea>
+      <span class="field__hint">
+        Embedded with <code class="mono">openai/text-embedding-3-small</code> (1536-dim) and stored in <code class="mono">payload.text</code>.
+        {% if row %}The embedding is always re-generated on edit.{% endif %}
+      </span>
+    </label>
 
-      <!-- Text -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">
-          Text <span class="text-red-500">*</span>
-        </label>
-        <textarea
-          name="text"
-          rows="6"
-          required
-          placeholder="The document text to embed…"
-          class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-        >{{ form_values.text or '' }}</textarea>
-        <p class="text-xs text-gray-400 mt-1">
-          This text is embedded using <code>openai/text-embedding-3-small</code> (1536-dim) and stored in <code>payload.text</code>.
-          {% if row %}The embedding is always re-generated on edit.{% endif %}
-        </p>
-      </div>
-
-    </div>
-
-    <div class="mt-4 flex items-center gap-4">
-      <button
-        type="submit"
-        class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-5 py-2 rounded"
-      >
-        {% if row %}Update Embedding{% else %}Create Embedding{% endif %}
-      </button>
-      <a href="/dashboard/vectordb" class="text-sm text-gray-500 hover:underline">Cancel</a>
+    <div style="display: flex; gap: 10px; padding-top: 8px;">
+      <button type="submit" class="btn btn--primary">{% if row %}Update embedding{% else %}{{ icon('plus') }} Create embedding{% endif %}</button>
+      <a class="btn btn--ghost" href="/dashboard/vectordb">Cancel</a>
     </div>
   </form>
-</div>
+</article>
 {% endblock %}

@@ -4,16 +4,25 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}GeoSWMM Gateway Admin{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/dashboard/static/dashboard.css?v={{ static_version }}">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <link rel="stylesheet" href="/dashboard/static/dashboard.css">
+  {% block head_extra %}{% endblock %}
 </head>
-<body class="bg-gray-100 min-h-screen">
-  {% include "partials/nav.html" %}
-  <main class="max-w-7xl mx-auto px-4 py-6">
-    {% include "partials/flash.html" %}
-    {% block content %}{% endblock %}
-  </main>
+<body>
+  <div class="shell">
+    {% include "partials/nav.html" %}
+    <main class="main">
+      <div class="page">
+        {% include "partials/flash.html" %}
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+  </div>
+  {% block body_extra %}{% endblock %}
 </body>
 </html>

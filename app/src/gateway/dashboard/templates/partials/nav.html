@@ -1,41 +1,64 @@
-<nav class="bg-gray-800 text-white shadow">
-  <div class="max-w-7xl mx-auto px-4">
-    <div class="flex items-center justify-between h-14">
-      <div class="flex items-center space-x-6">
-        <span class="font-bold text-lg">GeoSWMM Admin</span>
-        <a href="/dashboard/" class="hover:text-gray-300 text-sm">Overview</a>
-        <a href="/dashboard/users" class="hover:text-gray-300 text-sm">Users</a>
-        <a href="/dashboard/models" class="hover:text-gray-300 text-sm">Models</a>
-        <a href="/dashboard/vectordb" class="hover:text-gray-300 text-sm">Vector DB</a>
-        <a href="/dashboard/chats" class="hover:text-gray-300 text-sm">Chats</a>
-        <a href="/dashboard/logs" class="hover:text-gray-300 text-sm">Logs</a>
-        <a href="/dashboard/server" class="hover:text-gray-300 text-sm">Server</a>
-        <a href="/dashboard/settings" class="hover:text-gray-300 text-sm">Settings</a>
-        <div class="relative group">
-          <span class="hover:text-gray-300 text-sm cursor-default">Reports</span>
-          <div class="absolute left-0 top-full pt-1 hidden group-hover:block z-10">
-            <div class="bg-gray-700 rounded shadow-lg py-1 min-w-32">
-              <a href="/dashboard/reports/cost" class="block px-4 py-2 text-sm hover:bg-gray-600">Cost</a>
-              <a href="/dashboard/reports/users" class="block px-4 py-2 text-sm hover:bg-gray-600">Users</a>
-              <a href="/dashboard/reports/errors" class="block px-4 py-2 text-sm hover:bg-gray-600">Errors</a>
-              <a href="/dashboard/reports/latency" class="block px-4 py-2 text-sm hover:bg-gray-600">Latency</a>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="flex items-center space-x-4">
-        {% if current_admin %}
-          <span class="text-gray-400 text-sm">{{ current_admin.email }}</span>
-          <form method="post" action="/dashboard/logout">
-            {% if csrf_token is defined %}
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            {% endif %}
-            <button type="submit" class="text-sm bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">
-              Logout
-            </button>
-          </form>
-        {% endif %}
-      </div>
-    </div>
+{% from "partials/icons.html" import icon %}
+{%- set path = request.url.path -%}
+{%- set nav_items = [
+  ('/dashboard/',         'overview',  'Overview'),
+  ('/dashboard/users',    'users',     'Users'),
+  ('/dashboard/models',   'models',    'Models'),
+  ('/dashboard/chats',    'chats',     'Chats'),
+  ('/dashboard/logs',     'logs',      'Logs'),
+  ('/dashboard/vectordb', 'vectors',   'Vector DB'),
+  ('/dashboard/server',   'server',    'Server'),
+  ('/dashboard/settings', 'settings',  'Settings'),
+] -%}
+{%- set report_items = [
+  ('/dashboard/reports/cost',    'Cost'),
+  ('/dashboard/reports/users',   'Users'),
+  ('/dashboard/reports/errors',  'Errors'),
+  ('/dashboard/reports/latency', 'Latency'),
+] -%}
+<aside class="sidebar">
+  <div class="sidebar__brand">
+    <a href="/dashboard/" class="brand">
+      <span class="brand__mark"></span>
+      <span class="brand__text">GeoSWMM <em style="font-style: normal; color: var(--ink-500);">Gateway</em></span>
+    </a>
   </div>
-</nav>
+
+  <div class="sidebar__sec">Console</div>
+  <nav class="sidebar__nav">
+    {% for href, ico, label in nav_items %}
+      {%- set is_current = (href == '/dashboard/' and path in ('/dashboard', '/dashboard/'))
+                          or (href != '/dashboard/' and path.startswith(href)) -%}
+      <a class="sidebar__item" href="{{ href }}"{% if is_current %} aria-current="page"{% endif %}>
+        {{ icon(ico) }}
+        <span>{{ label }}</span>
+      </a>
+    {% endfor %}
+  </nav>
+
+  <div class="sidebar__sec">Reports</div>
+  <nav class="sidebar__nav">
+    {% for href, label in report_items %}
+      {%- set is_current = path.startswith(href) -%}
+      <a class="sidebar__item sidebar__sub-item" href="{{ href }}"{% if is_current %} aria-current="page"{% endif %}>
+        <span style="color: var(--ink-500);">· {{ label }}</span>
+      </a>
+    {% endfor %}
+  </nav>
+
+  {% if current_admin %}
+  <div class="sidebar__foot">
+    <span class="avatar avatar--sm">{{ current_admin.email[0]|upper }}</span>
+    <div class="sidebar__foot-meta" style="flex: 1; min-width: 0;">
+      <span style="font-size: 12.5px; color: var(--ink-900); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ current_admin.email }}</span>
+      <span style="font-size: 11px; color: var(--ink-500);">admin</span>
+    </div>
+    <form method="post" action="/dashboard/logout" style="margin: 0;">
+      {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
+      <button type="submit" class="btn btn--ghost" style="padding: 4px 8px;" title="Sign out">
+        {{ icon('logout', 14) }}
+      </button>
+    </form>
+  </div>
+  {% endif %}
+</aside>

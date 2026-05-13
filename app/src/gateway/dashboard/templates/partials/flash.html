@@ -1,6 +1,4 @@
 {% if flash %}
-  {% set flash_classes = "bg-green-100 border border-green-400 text-green-800" if flash.kind == "info" or flash.kind == "success" else "bg-red-100 border border-red-400 text-red-800" %}
-  <div class="{{ flash_classes }} px-4 py-3 rounded mb-4" role="alert">
-    {{ flash.msg }}
-  </div>
+  {%- set kind = flash.kind or 'info' -%}
+  <div class="flash flash--{{ kind }}" role="alert">{{ flash.msg }}</div>
 {% endif %}

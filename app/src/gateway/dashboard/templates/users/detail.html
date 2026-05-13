@@ -1,216 +1,187 @@
 {% extends "base.html" %}
+{% from "partials/icons.html" import icon %}
 {% block title %}User {{ target_user.email }} — GeoSWMM Admin{% endblock %}
 {% block content %}
-<div class="mb-6 flex items-center justify-between">
-  <div>
-    <h1 class="text-2xl font-bold text-gray-800">{{ target_user.email }}</h1>
-    <div class="flex items-center space-x-2 mt-1">
-      {% if target_user.is_admin %}
-        <span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs font-medium">Admin</span>
-      {% endif %}
+<div style="margin-bottom: 18px;">
+  <a class="btn btn--ghost" href="/dashboard/users" style="margin-left: -10px;">← Users</a>
+</div>
+
+<header style="display: flex; align-items: center; gap: 18px; margin-bottom: 28px;">
+  <span class="avatar avatar--lg">{{ target_user.email[0]|upper }}</span>
+  <div style="flex: 1;">
+    <h1 style="font-family: var(--font-display); font-size: 26px; margin: 0; font-weight: 500; color: var(--ink-700);">{{ target_user.email }}</h1>
+    <div style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
+      {% if target_user.is_admin %}<span class="chip chip--violet">Admin</span>{% endif %}
       {% if target_user.is_active %}
-        <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-medium">Active</span>
+        <span class="chip chip--sage"><span class="chip__dot"></span>Active</span>
       {% else %}
-        <span class="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-medium">Inactive</span>
+        <span class="chip chip--ink">Inactive</span>
       {% endif %}
+      <span class="chip chip--ink chip--mono">id {{ target_user.id }}</span>
     </div>
   </div>
-  <a href="/dashboard/users" class="text-sm text-gray-500 hover:text-gray-700">Back to Users</a>
-</div>
+</header>
 
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-  <div class="bg-white shadow rounded p-4">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Monthly Spend</div>
-    <div class="text-xl font-bold text-gray-800">${{ "%.4f"|format(spent_usd) }}</div>
+<section class="grid-3" style="margin-bottom: 28px;">
+  <article class="kpi">
+    <div class="kpi__label">Monthly spend</div>
+    <div class="kpi__value">
+      ${{ "%.4f"|format(spent_usd) }}<span style="font-size: 13px; color: var(--ink-500); font-family: var(--font-sans);"> &nbsp;/ {% if target_user.monthly_usd_cap and target_user.monthly_usd_cap > 0 %}${{ "%.2f"|format(target_user.monthly_usd_cap|float) }}{% else %}∞{% endif %}</span>
+    </div>
     {% if target_user.monthly_usd_cap and target_user.monthly_usd_cap > 0 %}
-      <div class="text-xs text-gray-400">of ${{ "%.2f"|format(target_user.monthly_usd_cap|float) }} cap</div>
-    {% else %}
-      <div class="text-xs text-gray-400">no cap</div>
-    {% endif %}
-  </div>
-  <div class="bg-white shadow rounded p-4">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Total Requests</div>
-    <div class="text-xl font-bold text-gray-800">{{ request_count }}</div>
-  </div>
-  <div class="bg-white shadow rounded p-4">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Member Since</div>
-    <div class="text-sm font-medium text-gray-800">{{ target_user.created_at | fmt_date }}</div>
-    <div class="text-xs text-gray-400">{{ target_user.created_at | relative_time }}</div>
-  </div>
-</div>
-
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-  <!-- Cap update -->
-  <div class="bg-white shadow rounded p-5">
-    <h2 class="text-base font-semibold text-gray-700 mb-3">Update Monthly Cap</h2>
-    <form method="post" action="/dashboard/users/{{ target_user.id }}/cap" class="flex items-end space-x-3">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="flex-1">
-        <label class="block text-xs text-gray-500 mb-1" for="cap">USD / month (0 = unlimited)</label>
-        <input type="number" id="cap" name="monthly_usd_cap"
-               value="{{ target_user.monthly_usd_cap|float }}"
-               min="0" step="0.01"
-               class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+      {% set pct = (spent_usd / (target_user.monthly_usd_cap|float) * 100) %}
+      <div class="bar" style="margin-top: 4px;">
+        <div class="bar__fill {% if pct >= 100 %}bar__fill--err{% elif pct >= 80 %}bar__fill--warn{% endif %}" style="width: {{ [pct, 100]|min }}%;"></div>
       </div>
-      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
-        Update
-      </button>
-    </form>
-  </div>
+    {% else %}
+      <div class="kpi__sub">uncapped</div>
+    {% endif %}
+  </article>
 
-  <!-- Admin toggle -->
-  <div class="bg-white shadow rounded p-5">
-    <h2 class="text-base font-semibold text-gray-700 mb-3">Admin Access</h2>
-    <p class="text-sm text-gray-600 mb-3">
-      Currently: <strong>{{ "Admin" if target_user.is_admin else "Not admin" }}</strong>
-    </p>
-    <form method="post" action="/dashboard/users/{{ target_user.id }}/admin">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit"
-              class="{% if target_user.is_admin %}bg-yellow-500 hover:bg-yellow-600{% else %}bg-purple-600 hover:bg-purple-700{% endif %} text-white px-4 py-2 rounded text-sm">
-        {{ "Remove Admin" if target_user.is_admin else "Grant Admin" }}
-      </button>
-    </form>
-  </div>
+  <article class="kpi">
+    <div class="kpi__label">Total requests</div>
+    <div class="kpi__value">{{ "{:,}".format(request_count) }}</div>
+    <div class="kpi__sub">across all endpoints</div>
+  </article>
 
-  <!-- Regenerate tokens -->
-  <div class="bg-white shadow rounded p-5">
-    <h2 class="text-base font-semibold text-gray-700 mb-1">Regenerate Tokens</h2>
-    <p class="text-sm text-gray-500 mb-3">Revokes all existing refresh tokens and issues a fresh pair. The new tokens are shown once.</p>
-    <form method="post" action="/dashboard/users/{{ target_user.id }}/regenerate">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm">
-        Regenerate
-      </button>
-    </form>
-  </div>
+  <article class="kpi">
+    <div class="kpi__label">Member since</div>
+    <div class="kpi__value kpi__value--mono">{{ target_user.created_at | fmt_date }}</div>
+    <div class="kpi__sub">{{ target_user.created_at | relative_time }}</div>
+  </article>
+</section>
 
-  <!-- Deactivate / Activate -->
-  {% if target_user.is_active %}
-  <div class="bg-white shadow rounded p-5 border border-red-100">
-    <h2 class="text-base font-semibold text-red-700 mb-1">Deactivate User</h2>
-    <p class="text-sm text-gray-500 mb-3">Prevents login and API access. Revokes all sessions and refresh tokens.</p>
-    <form method="post" action="/dashboard/users/{{ target_user.id }}/deactivate"
-          onsubmit="return confirm('Deactivate this user? They will lose all access immediately.');">
+<!-- Access controls -->
+<div class="grid-2" style="margin-bottom: 24px;">
+  <article class="card card--pad">
+    <div class="section-label" style="margin-bottom: 12px;">Monthly spending cap</div>
+    <form method="post" action="/dashboard/users/{{ target_user.id }}/cap" class="field--inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded text-sm">
-        Deactivate
-      </button>
+      <label class="field" style="flex: 1;">
+        <input class="field__input mono" type="number" id="cap" name="monthly_usd_cap"
+               value="{{ target_user.monthly_usd_cap|float }}"
+               min="0" step="0.01">
+        <span class="field__hint">USD per month. 0 = unlimited.</span>
+      </label>
+      <button type="submit" class="btn btn--primary">Save</button>
     </form>
-  </div>
-  {% else %}
-  <div class="bg-white shadow rounded p-5 border border-green-100">
-    <h2 class="text-base font-semibold text-green-700 mb-1">Activate User</h2>
-    <p class="text-sm text-gray-500 mb-3">Restores login and API access. Existing tokens stay revoked — use Regenerate to issue new ones.</p>
-    <form method="post" action="/dashboard/users/{{ target_user.id }}/activate"
-          onsubmit="return confirm('Reactivate this user?');">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">
-        Activate
-      </button>
-    </form>
-  </div>
-  {% endif %}
+  </article>
+
+  <article class="card card--pad">
+    <div class="section-label" style="margin-bottom: 12px;">Admin role</div>
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;">
+      <p class="muted" style="margin: 0; font-size: 13px; max-width: 360px;">
+        Admins can manage users, models, tokens, and view all logs. Currently:
+        <strong style="color: var(--ink-900);">{{ "Admin" if target_user.is_admin else "Not admin" }}</strong>.
+      </p>
+      <form method="post" action="/dashboard/users/{{ target_user.id }}/admin">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn {% if target_user.is_admin %}btn--secondary{% else %}btn--primary{% endif %}">
+          {{ "Revoke admin" if target_user.is_admin else "Make admin" }}
+        </button>
+      </form>
+    </div>
+  </article>
 </div>
 
 <!-- API Tokens -->
-<div class="bg-white shadow rounded overflow-hidden mb-6">
-  <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-    <h2 class="text-base font-semibold text-gray-700">API Tokens</h2>
+<article class="card" style="margin-bottom: 24px;">
+  <div style="padding: 16px var(--row-px); border-bottom: 1px solid var(--paper-200); display: flex; justify-content: space-between; align-items: center;">
+    <div>
+      <div class="section-label">API tokens</div>
+      <p class="muted" style="margin: 4px 0 0; font-size: 12.5px;">Tokens this user can present to authenticate against the gateway.</p>
+    </div>
+    <span class="chip chip--ink">{{ api_tokens|length }} total</span>
   </div>
 
   {% if api_tokens %}
-  <table class="w-full text-sm">
-    <thead class="bg-gray-50 text-gray-500 text-xs uppercase">
+  <table class="tbl">
+    <thead>
       <tr>
-        <th class="px-4 py-2 text-left">Description</th>
-        <th class="px-4 py-2 text-left">Author</th>
-        <th class="px-4 py-2 text-left">Models</th>
-        <th class="px-4 py-2 text-left">Locked PC</th>
-        <th class="px-4 py-2 text-left">Status</th>
-        <th class="px-4 py-2 text-left">Last Used</th>
-        <th class="px-4 py-2 text-left">Created</th>
-        <th class="px-4 py-2"></th>
+        <th>Description</th>
+        <th>Author</th>
+        <th>Models</th>
+        <th>Locked PC</th>
+        <th>Status</th>
+        <th>Last used</th>
+        <th>Created</th>
+        <th></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-gray-50">
+    <tbody>
       {% for tok in api_tokens %}
       {% set scoped = token_models.get(tok.id|string, []) %}
-      <tr class="hover:bg-gray-50 align-top">
-        <td class="px-4 py-2 text-gray-800 font-medium">{{ tok.description }}</td>
-        <td class="px-4 py-2 text-gray-600">{{ tok.author }}</td>
-        <td class="px-4 py-2 text-xs">
+      <tr style="vertical-align: top;">
+        <td style="font-weight: 500;">{{ tok.description }}</td>
+        <td class="muted">{{ tok.author }}</td>
+        <td>
           {% if tok.allow_all_models %}
-            <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded">All models</span>
-            <div class="text-gray-400 text-[11px] mt-1">auto-includes new ones</div>
+            <span class="chip chip--clay chip--mono">all models</span>
+            <div class="muted" style="font-size: 11px; margin-top: 4px;">auto-includes new ones</div>
           {% else %}
-            <span class="bg-amber-100 text-amber-700 px-2 py-0.5 rounded">{{ scoped|length }} restricted</span>
+            <span class="chip chip--amber">{{ scoped|length }} restricted</span>
             {% if scoped %}
-              <div class="text-gray-500 mt-1 max-w-xs">
+              <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 2px;">
                 {% for m in scoped %}
-                  <div class="font-mono text-[11px] truncate" title="{{ m }}">{{ m }}</div>
+                  <span class="mono muted" style="font-size: 11px;" title="{{ m }}">{{ m }}</span>
                 {% endfor %}
               </div>
             {% endif %}
           {% endif %}
           {% if tok.is_active %}
-            <details class="mt-2">
-              <summary class="text-blue-600 cursor-pointer text-xs hover:underline">Edit models</summary>
+            <details class="chat-details" style="margin-top: 8px;">
+              <summary class="muted" style="font-size: 11.5px;">Edit models</summary>
               <form method="post" action="/dashboard/users/{{ target_user.id }}/tokens/{{ tok.id }}/models"
-                    class="mt-2 p-3 bg-gray-50 border border-gray-200 rounded space-y-2">
+                    style="margin-top: 10px; padding: 12px; background: var(--paper-100); border: 1px solid var(--paper-300); border-radius: var(--r-md); display: flex; flex-direction: column; gap: 8px;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <label class="flex items-center space-x-2 text-xs">
+                <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 12px;">
                   <input type="radio" name="model_scope" value="all"
                          {% if tok.allow_all_models %}checked{% endif %}
-                         onclick="this.form.querySelector('.tok-models-{{ tok.id }}').classList.add('hidden')">
-                  <span><strong>All models</strong> — auto-include future ones</span>
+                         onclick="this.form.querySelector('.tok-models-{{ tok.id }}').style.display='none'">
+                  <span><strong style="color: var(--ink-900);">All models</strong> — auto-include future ones</span>
                 </label>
-                <label class="flex items-center space-x-2 text-xs">
+                <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 12px;">
                   <input type="radio" name="model_scope" value="custom"
                          {% if not tok.allow_all_models %}checked{% endif %}
-                         onclick="this.form.querySelector('.tok-models-{{ tok.id }}').classList.remove('hidden')">
-                  <span><strong>Restrict</strong> to selected models</span>
+                         onclick="this.form.querySelector('.tok-models-{{ tok.id }}').style.display='flex'">
+                  <span><strong style="color: var(--ink-900);">Restrict</strong> to selected models</span>
                 </label>
-                <div class="tok-models-{{ tok.id }} {% if tok.allow_all_models %}hidden{% endif %} pl-4 border-l-2 border-gray-300 max-h-48 overflow-auto space-y-1">
+                <div class="tok-models-{{ tok.id }}" style="display: {% if tok.allow_all_models %}none{% else %}flex{% endif %}; flex-direction: column; gap: 4px; padding-left: 16px; border-left: 2px solid var(--paper-300); max-height: 200px; overflow: auto;">
                   {% for m in available_models %}
-                  <label class="flex items-center space-x-2 text-xs">
-                    <input type="checkbox" name="models" value="{{ m.model }}"
-                           {% if m.model in scoped %}checked{% endif %}>
-                    <span class="font-mono">{{ m.model }}</span>
-                    <span class="text-gray-400">({{ m.endpoint_kind }})</span>
+                  <label style="display: flex; align-items: center; gap: 8px; font-size: 11.5px;">
+                    <input type="checkbox" name="models" value="{{ m.model }}" {% if m.model in scoped %}checked{% endif %}>
+                    <span class="mono">{{ m.model }}</span>
+                    <span class="muted" style="margin-left: auto;">{{ m.endpoint_kind }}</span>
                   </label>
                   {% endfor %}
                 </div>
-                <button type="submit"
-                        class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs">
-                  Save
-                </button>
+                <button type="submit" class="btn btn--primary btn--sm" style="align-self: flex-start;">Save</button>
               </form>
             </details>
           {% endif %}
         </td>
-        <td class="px-4 py-2 text-gray-500 font-mono text-xs">
+        <td class="col-mono muted" style="font-size: 11px;">
           {% if tok.machine_fingerprint %}
-            <span title="{{ tok.machine_fingerprint }}">{{ tok.machine_fingerprint[:24] }}{% if tok.machine_fingerprint|length > 24 %}…{% endif %}</span>
+            <span title="{{ tok.machine_fingerprint }}">{{ tok.machine_fingerprint[:20] }}{% if tok.machine_fingerprint|length > 20 %}…{% endif %}</span>
           {% else %}
-            <span class="text-gray-400 italic">not yet bound</span>
+            <span class="dim" style="font-style: italic;">not yet bound</span>
           {% endif %}
         </td>
-        <td class="px-4 py-2">
+        <td>
           {% if tok.is_active %}
-            <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">Active</span>
+            <span class="chip chip--sage"><span class="chip__dot"></span>Active</span>
           {% else %}
-            <span class="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs">Revoked</span>
+            <span class="chip chip--rust">Revoked</span>
           {% endif %}
         </td>
-        <td class="px-4 py-2 text-gray-500 text-xs">{{ tok.last_used_at | relative_time if tok.last_used_at else "never" }}</td>
-        <td class="px-4 py-2 text-gray-500 text-xs">{{ tok.created_at | relative_time }}</td>
-        <td class="px-4 py-2 text-right">
+        <td class="col-mono muted">{{ tok.last_used_at | relative_time if tok.last_used_at else "never" }}</td>
+        <td class="col-mono muted">{{ tok.created_at | relative_time }}</td>
+        <td class="col-actions">
           {% if tok.is_active %}
           <form method="post" action="/dashboard/users/{{ target_user.id }}/tokens/{{ tok.id }}/revoke"
-                onsubmit="return confirm('Revoke this token? The add-in will lose access immediately.');">
+                onsubmit="return confirm('Revoke this token? The add-in will lose access immediately.');" style="margin: 0;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="text-xs text-red-600 hover:underline">Revoke</button>
+            <button type="submit" class="btn btn--danger btn--sm">Revoke</button>
           </form>
           {% endif %}
         </td>
@@ -219,117 +190,158 @@
     </tbody>
   </table>
   {% else %}
-  <p class="px-4 py-4 text-sm text-gray-400">No API tokens yet.</p>
+  <p class="tbl-empty">No API tokens yet.</p>
   {% endif %}
 
   <!-- Create new token -->
-  <div class="px-4 py-4 border-t border-gray-100 bg-gray-50">
-    <h3 class="text-sm font-semibold text-gray-700 mb-3">Create New API Token</h3>
-    <form method="post" action="/dashboard/users/{{ target_user.id }}/tokens"
-          class="space-y-4">
+  <div style="padding: 18px var(--row-px); border-top: 1px solid var(--paper-200); background: var(--paper-100);">
+    <div class="section-label" style="margin-bottom: 14px;">Create new API token</div>
+    <form method="post" action="/dashboard/users/{{ target_user.id }}/tokens" class="col" style="gap: 14px;">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="flex flex-wrap items-end gap-3">
-        <div>
-          <label class="block text-xs text-gray-500 mb-1">Description</label>
-          <input type="text" name="description" placeholder="e.g. Office laptop — ArcPro"
-                 required maxlength="255"
-                 class="border border-gray-300 rounded px-3 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-blue-400">
-        </div>
-        <div>
-          <label class="block text-xs text-gray-500 mb-1">Author</label>
-          <input type="text" name="author" placeholder="e.g. John Smith"
-                 required maxlength="255"
-                 class="border border-gray-300 rounded px-3 py-2 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-400">
-        </div>
+
+      <div class="row" style="flex-wrap: wrap;">
+        <label class="field" style="flex: 1; min-width: 220px;">
+          <span class="field__label">Description</span>
+          <input class="field__input" type="text" name="description" placeholder="e.g. Office laptop — ArcPro" required maxlength="255">
+        </label>
+        <label class="field" style="flex: 1; min-width: 180px;">
+          <span class="field__label">Author</span>
+          <input class="field__input" type="text" name="author" placeholder="e.g. John Smith" required maxlength="255">
+        </label>
       </div>
 
       <div>
-        <div class="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wide">Model Access</div>
-        <label class="flex items-start space-x-2 text-sm mb-2">
+        <div class="section-label" style="margin-bottom: 8px;">Model access</div>
+        <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; margin-bottom: 8px;">
           <input type="radio" name="model_scope" value="all" checked
-                 onclick="document.getElementById('new-token-models').classList.add('hidden')"
-                 class="mt-1">
+                 onclick="document.getElementById('new-token-models').style.display='none'"
+                 style="margin-top: 3px;">
           <span>
-            <strong>All models</strong>
-            <div class="text-xs text-gray-500">Token uses every allowed model and auto-picks-up models added in the future.</div>
+            <strong style="color: var(--ink-900);">All models</strong>
+            <div class="muted" style="font-size: 11.5px;">Token uses every allowed model and auto-picks-up models added in the future.</div>
           </span>
         </label>
-        <label class="flex items-start space-x-2 text-sm">
+        <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px;">
           <input type="radio" name="model_scope" value="custom"
-                 onclick="document.getElementById('new-token-models').classList.remove('hidden')"
-                 class="mt-1">
+                 onclick="document.getElementById('new-token-models').style.display='flex'"
+                 style="margin-top: 3px;">
           <span>
-            <strong>Custom models</strong>
-            <div class="text-xs text-gray-500">Restrict the token to a specific list of models.</div>
+            <strong style="color: var(--ink-900);">Custom models</strong>
+            <div class="muted" style="font-size: 11.5px;">Restrict the token to a specific list of models.</div>
           </span>
         </label>
 
-        <div id="new-token-models" class="hidden mt-3 ml-6 p-3 bg-white border border-gray-200 rounded max-h-56 overflow-auto space-y-1">
+        <div id="new-token-models" style="display: none; flex-direction: column; gap: 4px; margin-top: 12px; margin-left: 24px; padding: 12px; background: var(--paper-50); border: 1px solid var(--paper-300); border-radius: var(--r-md); max-height: 240px; overflow: auto;">
           {% if available_models %}
             {% for m in available_models %}
-            <label class="flex items-center space-x-2 text-xs">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 12px;">
               <input type="checkbox" name="models" value="{{ m.model }}">
-              <span class="font-mono">{{ m.model }}</span>
-              <span class="text-gray-400">({{ m.endpoint_kind }})</span>
-              <span class="text-gray-400">— in ${{ m.input_per_mtoken }}/M{% if m.output_per_mtoken %} · out ${{ m.output_per_mtoken }}/M{% endif %}</span>
+              <span class="mono">{{ m.model }}</span>
+              <span class="muted" style="margin-left: auto;">{{ m.endpoint_kind }} · in ${{ m.input_per_mtoken }}/M{% if m.output_per_mtoken %} · out ${{ m.output_per_mtoken }}/M{% endif %}</span>
             </label>
             {% endfor %}
           {% else %}
-            <p class="text-xs text-gray-400">No active models defined yet. Add one under <a href="/dashboard/models" class="text-blue-600 hover:underline">Model Pricing</a> first.</p>
+            <p class="muted" style="font-size: 12px; margin: 0;">No active models defined yet. Add one under <a href="/dashboard/models" style="color: var(--accent-600);">Model Pricing</a> first.</p>
           {% endif %}
         </div>
       </div>
 
-      <button type="submit"
-              class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
-        Create Token
-      </button>
+      <button type="submit" class="btn btn--primary" style="align-self: flex-start;">{{ icon('plus') }} Create token</button>
     </form>
   </div>
-</div>
+</article>
 
 <!-- Recent requests -->
 {% if recent_logs %}
-<div class="bg-white shadow rounded overflow-hidden">
-  <div class="px-4 py-3 border-b border-gray-100">
-    <h2 class="text-base font-semibold text-gray-700">Recent Requests (last 20)</h2>
+<article class="card" style="margin-bottom: 24px;">
+  <div style="padding: 16px var(--row-px); border-bottom: 1px solid var(--paper-200);">
+    <div class="section-label">Recent requests · last 20</div>
   </div>
-  <table class="w-full text-sm">
-    <thead class="bg-gray-50 text-gray-500 text-xs uppercase">
+  <table class="tbl">
+    <thead>
       <tr>
-        <th class="px-4 py-2 text-left">Time</th>
-        <th class="px-4 py-2 text-left">Endpoint</th>
-        <th class="px-4 py-2 text-left">Model</th>
-        <th class="px-4 py-2 text-right">Status</th>
-        <th class="px-4 py-2 text-right">Cost</th>
-        <th class="px-4 py-2"></th>
+        <th>Time</th>
+        <th>Endpoint</th>
+        <th>Model</th>
+        <th class="col-num">Status</th>
+        <th class="col-num">Cost</th>
+        <th></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-gray-50">
+    <tbody>
       {% for log in recent_logs %}
-      <tr class="hover:bg-gray-50">
-        <td class="px-4 py-2 text-gray-500 text-xs">{{ log.created_at | relative_time }}</td>
-        <td class="px-4 py-2 text-gray-700">{{ log.endpoint }}</td>
-        <td class="px-4 py-2 text-gray-600 text-xs">{{ log.model or "—" }}</td>
-        <td class="px-4 py-2 text-right">
-          <span class="{% if log.status_code and log.status_code >= 400 %}text-red-600{% else %}text-gray-700{% endif %}">
-            {{ log.status_code or "—" }}
-          </span>
+      <tr>
+        <td class="col-mono muted">{{ log.created_at | relative_time }}</td>
+        <td class="col-mono">{{ log.endpoint }}</td>
+        <td class="col-mono muted">{{ log.model or "—" }}</td>
+        <td class="col-num">
+          {% set sc = log.status_code or 0 %}
+          {% if sc >= 500 %}<span class="chip chip--rust">{{ sc }}</span>
+          {% elif sc >= 400 %}<span class="chip chip--amber">{{ sc }}</span>
+          {% elif sc >= 200 %}<span class="muted mono">{{ sc }}</span>
+          {% else %}<span class="dim">—</span>{% endif %}
         </td>
-        <td class="px-4 py-2 text-right text-gray-600 text-xs">
-          {% if log.cost_usd %}${{ "%.6f"|format(log.cost_usd|float) }}{% else %}—{% endif %}
+        <td class="col-num col-mono">
+          {% if log.cost_usd %}${{ "%.6f"|format(log.cost_usd|float) }}{% else %}<span class="dim">—</span>{% endif %}
         </td>
-        <td class="px-4 py-2 text-right">
-          <a href="/dashboard/logs/{{ log.id }}" class="text-blue-600 hover:underline text-xs">View</a>
-        </td>
+        <td class="col-actions"><a class="btn btn--ghost btn--sm" href="/dashboard/logs/{{ log.id }}">View</a></td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
-</div>
+</article>
 {% else %}
-<div class="bg-white shadow rounded p-8 text-center text-gray-400">
+<article class="card card--pad" style="text-align: center; color: var(--ink-500); margin-bottom: 24px;">
   No request log entries for this user yet.
-</div>
+</article>
 {% endif %}
+
+<!-- Danger zone -->
+<hr class="hr-section">
+<div class="section-label section-label--danger" style="margin-bottom: 12px;">Danger zone</div>
+
+<div class="col" style="gap: 14px;">
+  <article class="card card--pad card--danger">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap;">
+      <div>
+        <div style="font-weight: 500; color: var(--ink-900); margin-bottom: 4px;">Regenerate JWT tokens</div>
+        <p class="muted" style="margin: 0; font-size: 13px;">Revokes all existing refresh tokens and issues a fresh pair. New tokens are shown once.</p>
+      </div>
+      <form method="post" action="/dashboard/users/{{ target_user.id }}/regenerate" style="margin: 0;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn--danger">Regenerate</button>
+      </form>
+    </div>
+  </article>
+
+  {% if target_user.is_active %}
+  <article class="card card--pad card--danger">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap;">
+      <div>
+        <div style="font-weight: 500; color: var(--ink-900); margin-bottom: 4px;">Deactivate user</div>
+        <p class="muted" style="margin: 0; font-size: 13px;">Blocks sign-in and revokes every token. History is preserved.</p>
+      </div>
+      <form method="post" action="/dashboard/users/{{ target_user.id }}/deactivate"
+            onsubmit="return confirm('Deactivate this user? They will lose all access immediately.');" style="margin: 0;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn--danger">Deactivate</button>
+      </form>
+    </div>
+  </article>
+  {% else %}
+  <article class="card card--pad" style="border-color: color-mix(in oklab, var(--sage-500) 25%, var(--paper-300));">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap;">
+      <div>
+        <div style="font-weight: 500; color: var(--ink-900); margin-bottom: 4px;">Activate user</div>
+        <p class="muted" style="margin: 0; font-size: 13px;">Restores login and API access. Existing tokens stay revoked — use Regenerate to issue new ones.</p>
+      </div>
+      <form method="post" action="/dashboard/users/{{ target_user.id }}/activate"
+            onsubmit="return confirm('Reactivate this user?');" style="margin: 0;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn--success">Activate</button>
+      </form>
+    </div>
+  </article>
+  {% endif %}
+</div>
 {% endblock %}

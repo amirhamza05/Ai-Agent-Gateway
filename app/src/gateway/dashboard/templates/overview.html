@@ -1,46 +1,76 @@
 {% extends "base.html" %}
+{% from "partials/icons.html" import icon %}
 {% block title %}Overview — GeoSWMM Admin{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold text-gray-800 mb-6">Overview</h1>
+<header class="page-header">
+  <div>
+    <h1>Overview</h1>
+    <p class="subtitle">Today on the gateway, at a glance.</p>
+  </div>
+  <div class="page-header__actions">
+    <button class="btn btn--secondary" onclick="window.location.reload()">{{ icon('refresh') }} Refresh</button>
+  </div>
+</header>
 
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-  <div class="bg-white shadow rounded p-5">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Today's Cost</div>
-    <div class="text-2xl font-bold text-gray-800">${{ "%.4f"|format(today_cost) }}</div>
-  </div>
-  <div class="bg-white shadow rounded p-5">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Today's Requests</div>
-    <div class="text-2xl font-bold text-gray-800">{{ today_requests }}</div>
-  </div>
-  <div class="bg-white shadow rounded p-5">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Error Rate (today)</div>
-    <div class="text-2xl font-bold {% if today_error_rate > 5 %}text-red-600{% else %}text-gray-800{% endif %}">
-      {{ today_error_rate }}%
+<section class="grid-4" style="margin-bottom: 24px;">
+  <article class="kpi">
+    <div class="kpi__label">Today's cost</div>
+    <div class="kpi__value">${{ "%.4f"|format(today_cost) }}</div>
+    <div class="kpi__sub">USD spent since midnight UTC</div>
+  </article>
+
+  <article class="kpi">
+    <div class="kpi__label">Today's requests</div>
+    <div class="kpi__value">{{ "{:,}".format(today_requests) }}</div>
+    <div class="kpi__sub">all endpoints</div>
+  </article>
+
+  <article class="kpi">
+    <div class="kpi__label">Error rate</div>
+    <div class="kpi__value">{{ today_error_rate }}%</div>
+    <div class="kpi__delta {% if today_error_rate > 5 %}kpi__delta--down{% else %}kpi__delta--up{% endif %}">
+      {% if today_error_rate > 5 %}above 5% threshold{% else %}below 5% threshold{% endif %}
     </div>
-  </div>
-  <div class="bg-white shadow rounded p-5">
-    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Top Model</div>
-    <div class="text-base font-bold text-gray-800 truncate">{{ top_model }}</div>
-  </div>
-</div>
+  </article>
 
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-  <div class="bg-white shadow rounded p-5">
-    <div class="text-sm font-medium text-gray-700 mb-4">Cost over last 7 days</div>
-    <canvas id="costChart" height="120"></canvas>
-  </div>
-  <div class="bg-white shadow rounded p-5">
-    <div class="text-sm font-medium text-gray-700 mb-1">Total Users</div>
-    <div class="text-3xl font-bold text-gray-800">{{ user_count }}</div>
-    <a href="/dashboard/users" class="text-sm text-blue-600 hover:underline mt-2 inline-block">Manage users</a>
-  </div>
-</div>
+  <article class="kpi">
+    <div class="kpi__label">Top model</div>
+    <div class="kpi__value kpi__value--mono">{{ top_model }}</div>
+    <div class="kpi__sub">most-used model today</div>
+  </article>
+</section>
+
+<section class="grid-23" style="margin-bottom: 24px;">
+  <article class="card card--pad">
+    <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px;">
+      <div class="section-label">Cost over the last 7 days</div>
+      <a class="btn btn--ghost" href="/dashboard/reports/cost">Open report {{ icon('chev', 12) }}</a>
+    </div>
+    <canvas id="costChart" height="220"></canvas>
+  </article>
+
+  <article class="card card--pad" style="display: flex; flex-direction: column; gap: 16px;">
+    <div>
+      <div class="section-label">Users</div>
+      <div style="display: flex; align-items: baseline; gap: 16px; margin-top: 6px;">
+        <span style="font-family: var(--font-display); font-size: 32px; color: var(--ink-900); letter-spacing: -0.01em;">{{ user_count }}</span>
+        <span class="muted" style="font-size: 12px;">total</span>
+      </div>
+    </div>
+    <div style="display: flex; gap: 6px; margin-top: auto; flex-wrap: wrap;">
+      <a class="btn btn--ghost" href="/dashboard/users">View users {{ icon('chev', 12) }}</a>
+      <a class="btn btn--ghost" href="/dashboard/logs">View logs {{ icon('chev', 12) }}</a>
+    </div>
+  </article>
+</section>
 
 <script>
 (async () => {
   const resp = await fetch('/dashboard/reports/cost.json?window=7d');
   const data = await resp.json();
   const ctx = document.getElementById('costChart');
+  // Match the design's clay accent and warm paper palette.
+  const accent = '#C26B4A';
   new Chart(ctx, {
     type: 'line',
     data: {
@@ -48,16 +78,24 @@
       datasets: [{
         label: 'Cost USD',
         data: data.map(d => d.cost_usd),
-        borderColor: 'rgb(37, 99, 235)',
-        backgroundColor: 'rgba(37, 99, 235, 0.1)',
+        borderColor: accent,
+        backgroundColor: 'rgba(194, 107, 74, 0.10)',
+        borderWidth: 1.75,
         tension: 0.3,
         fill: true,
+        pointBackgroundColor: '#FBF8F2',
+        pointBorderColor: accent,
+        pointBorderWidth: 1.5,
+        pointRadius: 3,
       }]
     },
     options: {
       responsive: true,
       plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true } }
+      scales: {
+        y: { beginAtZero: true, grid: { color: '#EDE6DA' }, ticks: { color: '#6B6157', font: { family: 'JetBrains Mono', size: 10 } } },
+        x: { grid: { display: false }, ticks: { color: '#6B6157', font: { family: 'JetBrains Mono', size: 10 } } }
+      }
     }
   });
 })();

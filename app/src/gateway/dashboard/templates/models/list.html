@@ -1,82 +1,76 @@
 {% extends "base.html" %}
+{% from "partials/icons.html" import icon %}
 {% block title %}Models — GeoSWMM Admin{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold text-gray-800">Model Pricing</h1>
-  <a href="/dashboard/models/new"
-     class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium">
-    Add Model
-  </a>
-</div>
+<header class="page-header">
+  <div>
+    <h1>Models</h1>
+    <p class="subtitle">Provider routing, pricing, and per-model toggles.</p>
+  </div>
+  <div class="page-header__actions">
+    <a class="btn btn--primary" href="/dashboard/models/new">{{ icon('plus') }} Add model</a>
+  </div>
+</header>
 
-<div class="bg-white shadow rounded overflow-hidden">
-  <table class="w-full text-sm">
-    <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+<article class="card">
+  <table class="tbl">
+    <thead>
       <tr>
-        <th class="px-4 py-3 text-left">Model</th>
-        <th class="px-4 py-3 text-left">Type</th>
-        <th class="px-4 py-3 text-right">Input $/M</th>
-        <th class="px-4 py-3 text-right">Output $/M</th>
-        <th class="px-4 py-3 text-right">Cache Read $/M</th>
-        <th class="px-4 py-3 text-right">Cache Write $/M</th>
-        <th class="px-4 py-3 text-center">Allowed</th>
-        <th class="px-4 py-3 text-center">Status</th>
-        <th class="px-4 py-3 text-left">Notes</th>
-        <th class="px-4 py-3"></th>
+        <th>Model</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th class="col-num">In $/M</th>
+        <th class="col-num">Out $/M</th>
+        <th class="col-num">Cache read $/M</th>
+        <th class="col-num">Cache write $/M</th>
+        <th>Allowed</th>
+        <th>Notes</th>
+        <th></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-gray-100">
+    <tbody>
       {% for m in models %}
-      <tr class="hover:bg-gray-50 {% if m.disabled_at %}opacity-50{% endif %}">
-        <td class="px-4 py-3 font-mono text-xs text-gray-800">{{ m.model }}</td>
-        <td class="px-4 py-3 text-gray-600 text-xs">{{ m.endpoint_kind }}</td>
-        <td class="px-4 py-3 text-right text-gray-700">${{ m.input_per_mtoken }}</td>
-        <td class="px-4 py-3 text-right text-gray-600">
-          {% if m.output_per_mtoken %}${{ m.output_per_mtoken }}{% else %}—{% endif %}
-        </td>
-        <td class="px-4 py-3 text-right text-gray-600">
-          {% if m.cache_read_per_mtoken %}${{ m.cache_read_per_mtoken }}{% else %}—{% endif %}
-        </td>
-        <td class="px-4 py-3 text-right text-gray-600">
-          {% if m.cache_write_per_mtoken %}${{ m.cache_write_per_mtoken }}{% else %}—{% endif %}
-        </td>
-        <td class="px-4 py-3 text-center">
-          {% if m.is_allowed %}
-            <span class="text-green-600 text-xs font-medium">Yes</span>
-          {% else %}
-            <span class="text-red-500 text-xs font-medium">No</span>
-          {% endif %}
-        </td>
-        <td class="px-4 py-3 text-center">
+      <tr {% if m.disabled_at %}class="is-dim"{% endif %}>
+        <td class="col-mono" style="font-weight: 500;">{{ m.model }}</td>
+        <td><span class="chip chip--ink chip--mono">{{ m.endpoint_kind }}</span></td>
+        <td>
           {% if m.disabled_at %}
-            <span class="bg-gray-200 text-gray-600 px-2 py-0.5 rounded text-xs">Disabled</span>
+            <span class="chip chip--ink">Disabled</span>
           {% else %}
-            <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">Active</span>
+            <span class="chip chip--sage"><span class="chip__dot"></span>Active</span>
           {% endif %}
         </td>
-        <td class="px-4 py-3 text-gray-500 text-xs">{{ m.notes or "" }}</td>
-        <td class="px-4 py-3 text-right">
-          <div class="flex items-center justify-end space-x-2">
-            {% if not m.disabled_at %}
-              <a href="/dashboard/models/{{ m.model }}/edit"
-                 class="text-blue-600 hover:underline text-xs">Edit</a>
+        <td class="col-num col-mono">${{ m.input_per_mtoken }}</td>
+        <td class="col-num col-mono">{% if m.output_per_mtoken %}${{ m.output_per_mtoken }}{% else %}<span class="dim">—</span>{% endif %}</td>
+        <td class="col-num col-mono">{% if m.cache_read_per_mtoken %}${{ m.cache_read_per_mtoken }}{% else %}<span class="dim">—</span>{% endif %}</td>
+        <td class="col-num col-mono">{% if m.cache_write_per_mtoken %}${{ m.cache_write_per_mtoken }}{% else %}<span class="dim">—</span>{% endif %}</td>
+        <td>
+          {% if m.is_allowed %}
+            <span class="chip chip--sage">Yes</span>
+          {% else %}
+            <span class="chip chip--rust">No</span>
+          {% endif %}
+        </td>
+        <td class="muted" style="font-size: 12px; max-width: 220px;">{{ m.notes or "" }}</td>
+        <td class="col-actions">
+          {% if not m.disabled_at %}
+            <div style="display: inline-flex; gap: 4px; align-items: center;">
+              <a class="btn btn--ghost btn--sm" href="/dashboard/models/{{ m.model }}/edit">Edit</a>
               <form method="post" action="/dashboard/models/{{ m.model }}/delete"
-                    onsubmit="return confirm('Disable {{ m.model }}?');" class="inline">
+                    onsubmit="return confirm('Disable {{ m.model }}?');" style="margin: 0;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="text-red-500 hover:underline text-xs">Disable</button>
+                <button type="submit" class="btn btn--danger btn--sm">Disable</button>
               </form>
-            {% else %}
-              <span class="text-gray-400 text-xs">Disabled {{ m.disabled_at | fmt_date }}</span>
-            {% endif %}
-          </div>
+            </div>
+          {% else %}
+            <span class="muted" style="font-size: 11px;">Disabled {{ m.disabled_at | fmt_date }}</span>
+          {% endif %}
         </td>
       </tr>
       {% else %}
-      <tr>
-        <td colspan="10" class="px-4 py-8 text-center text-gray-400">No pricing rows found.</td>
-      </tr>
+      <tr><td colspan="10" class="tbl-empty">No pricing rows found.</td></tr>
       {% endfor %}
     </tbody>
   </table>
-</div>
+</article>
 {% endblock %}

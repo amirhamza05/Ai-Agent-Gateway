@@ -1,55 +1,51 @@
 {% extends "base.html" %}
+{% from "partials/icons.html" import icon %}
 {% block title %}New User — GeoSWMM Admin{% endblock %}
 {% block content %}
-<div class="max-w-lg mx-auto">
-  <h1 class="text-2xl font-bold text-gray-800 mb-6">Create New User</h1>
-
-  <div class="bg-white shadow rounded p-6">
-    <form method="post" action="/dashboard/users" class="space-y-4">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1" for="email">Email *</label>
-        <input type="email" id="email" name="email" required
-               class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1" for="password">
-          Password * <span class="text-gray-400 font-normal">(min 12 characters)</span>
-        </label>
-        <input type="password" id="password" name="password" required minlength="12"
-               class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1" for="monthly_usd_cap">
-          Monthly USD Cap
-        </label>
-        <input type="number" id="monthly_usd_cap" name="monthly_usd_cap" value="10.00"
-               min="0" step="0.01"
-               class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-        <p class="text-xs text-gray-400 mt-1">Set to 0 for no cap (unlimited).</p>
-      </div>
-
-      <div class="flex items-center space-x-2">
-        <input type="checkbox" id="is_admin" name="is_admin"
-               class="rounded border-gray-300 text-blue-600">
-        <label class="text-sm font-medium text-gray-700" for="is_admin">Grant admin access</label>
-      </div>
-
-      <div class="flex items-center space-x-3 pt-2">
-        <button type="submit"
-                class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded text-sm font-medium">
-          Create User
-        </button>
-        <a href="/dashboard/users" class="text-sm text-gray-500 hover:text-gray-700">Cancel</a>
-      </div>
-    </form>
+<header class="page-header">
+  <div>
+    <h1>Create user</h1>
+    <p class="subtitle">A new operator or API consumer. Tokens are shown once after creation.</p>
   </div>
+  <div class="page-header__actions">
+    <a class="btn btn--ghost" href="/dashboard/users">← Users</a>
+  </div>
+</header>
 
-  <p class="text-xs text-gray-400 mt-4">
-    After creation, the access and refresh tokens are shown once. Copy them before leaving that page.
-  </p>
-</div>
+<article class="card card--pad" style="max-width: 560px;">
+  <form method="post" action="/dashboard/users" class="col" style="gap: 16px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label class="field">
+      <span class="field__label">Email <span class="field__required">*</span></span>
+      <input class="field__input" type="email" id="email" name="email" required placeholder="you@example.com">
+    </label>
+
+    <label class="field">
+      <span class="field__label">Password <span class="field__required">*</span></span>
+      <input class="field__input" type="password" id="password" name="password" required minlength="12">
+      <span class="field__hint">Minimum 12 characters.</span>
+    </label>
+
+    <label class="field">
+      <span class="field__label">Monthly USD cap</span>
+      <input class="field__input mono" type="number" id="monthly_usd_cap" name="monthly_usd_cap" value="10.00" min="0" step="0.01">
+      <span class="field__hint">0 = unlimited.</span>
+    </label>
+
+    <label style="display: flex; align-items: center; gap: 10px; font-size: 13px;">
+      <input type="checkbox" id="is_admin" name="is_admin">
+      <span><strong style="color: var(--ink-900);">Grant admin access</strong> — full console access including user management.</span>
+    </label>
+
+    <div style="display: flex; gap: 10px; padding-top: 8px;">
+      <button class="btn btn--primary" type="submit">{{ icon('plus') }} Create user</button>
+      <a class="btn btn--ghost" href="/dashboard/users">Cancel</a>
+    </div>
+  </form>
+</article>
+
+<p class="muted" style="font-size: 12px; margin-top: 16px; max-width: 560px;">
+  After creation, the access and refresh tokens are shown once. Copy them before leaving that page.
+</p>
 {% endblock %}
