@@ -57,6 +57,36 @@ for key, value in _DEFAULT_TEST_ENV.items():
 # tests because we only construct the engine — we don't connect.
 _TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
+# Guardrail: db_engine TRUNCATEs users + refresh_tokens + request_log between
+# tests. Pointing TEST_DATABASE_URL at the same database as DATABASE_URL would
+# wipe real data on every test run. Refuse to start in that case so the
+# mistake is loud, not silent. Compares parsed hosts + paths so trivial
+# differences (driver suffix, query string) don't bypass the check.
+def _guard_test_db_distinct() -> None:
+    if not _TEST_DATABASE_URL:
+        return
+    prod = os.environ.get("DATABASE_URL", "")
+    if not prod:
+        return
+    from urllib.parse import urlparse
+
+    def _key(url: str) -> tuple[str, str, str]:
+        u = urlparse(url)
+        # Strip the SQLAlchemy driver suffix (postgresql+asyncpg → postgresql)
+        scheme = u.scheme.split("+", 1)[0]
+        return (scheme, u.netloc, u.path)
+
+    if _key(_TEST_DATABASE_URL) == _key(prod):
+        raise RuntimeError(
+            "TEST_DATABASE_URL must point to a different database than "
+            "DATABASE_URL — the test suite TRUNCATEs users/refresh_tokens/"
+            "request_log between tests. Create a separate DB (e.g. "
+            "`gateway_test`) and point TEST_DATABASE_URL at it."
+        )
+
+
+_guard_test_db_distinct()
+
 
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
