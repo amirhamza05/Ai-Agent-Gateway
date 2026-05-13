@@ -8,21 +8,19 @@ We intentionally do NOT expose a module-level engine. Tests need to swap it
 out for a per-DSN engine, and async resources can't safely live at module
 scope when the event loop changes between tests.
 
-pgvector codec
---------------
-``pgvector.asyncpg.register_vector`` must be called on each raw asyncpg
-connection before any vector column is read or written. SQLAlchemy's
-asyncpg dialect wraps the raw connection in an ``AdaptedConnection`` and
-does NOT forward the asyncpg ``init=`` kwarg, so the canonical integration
-point is the pool ``"connect"`` event on the sync façade — the adapter
-exposes ``run_async`` to drive a coroutine on the dialect's event loop.
-See https://github.com/pgvector/pgvector-python#sqlalchemy.
+pgvector
+--------
+We do NOT install the asyncpg binary codec for ``vector`` here. The
+SQLAlchemy ``pgvector.sqlalchemy.Vector`` type already handles both
+directions via the text protocol: ``bind_processor`` turns a Python list
+into ``'[1,2,3]'`` and ``result_processor`` parses the same shape back
+into a numpy array. Installing the asyncpg codec on top of that breaks
+inserts — the codec receives the already-stringified value and dies with
+``could not convert string to float``.
 """
 
 from __future__ import annotations
 
-from pgvector.asyncpg import register_vector
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -53,13 +51,6 @@ def create_engine(database_url: str, *, echo: bool = False) -> AsyncEngine:
         pool_pre_ping=True,
         pool_recycle=1800,
     )
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def _register_pgvector_codec(dbapi_conn, _record):  # type: ignore[no-untyped-def]
-        # ``dbapi_conn`` is SQLAlchemy's AdaptedConnection wrapping the raw
-        # asyncpg.Connection. ``run_async`` runs the coroutine on the
-        # dialect's event loop synchronously from this sync callback.
-        dbapi_conn.run_async(register_vector)
 
     return engine
 
