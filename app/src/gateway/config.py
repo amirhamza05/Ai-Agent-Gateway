@@ -97,16 +97,15 @@ class Settings(BaseSettings):
     )
 
     # ---- pgvector ------------------------------------------------------
-    # Feature flag: when True, /v1/qdrant/* routes hit the local Postgres
-    # pgvector backend instead of Qdrant Cloud. Flip to True after the
-    # backfill (§8 of docs/qdrant-to-pgvector-migration.md) is complete and
-    # verified. When False, the existing Qdrant Cloud proxy is used and the
-    # pgvector code path is never reached.
+    # Default backend for /v1/qdrant/* is the local Postgres pgvector store.
+    # The flag remains so an operator can temporarily flip back to Qdrant
+    # Cloud (PGVECTOR_ENABLED=false) during the migration window if a bug is
+    # found; it will be removed once the Qdrant path is deleted.
     pgvector_enabled: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Route /v1/qdrant/* to the local pgvector backend instead of "
-            "Qdrant Cloud. Set PGVECTOR_ENABLED=true after backfill."
+            "Route /v1/qdrant/* to the local pgvector backend (default). "
+            "Set PGVECTOR_ENABLED=false to fall back to Qdrant Cloud."
         ),
     )
 
