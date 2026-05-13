@@ -96,6 +96,20 @@ class Settings(BaseSettings):
         description="Qdrant API key. Server-side only.",
     )
 
+    # ---- pgvector ------------------------------------------------------
+    # Feature flag: when True, /v1/qdrant/* routes hit the local Postgres
+    # pgvector backend instead of Qdrant Cloud. Flip to True after the
+    # backfill (§8 of docs/qdrant-to-pgvector-migration.md) is complete and
+    # verified. When False, the existing Qdrant Cloud proxy is used and the
+    # pgvector code path is never reached.
+    pgvector_enabled: bool = Field(
+        default=False,
+        description=(
+            "Route /v1/qdrant/* to the local pgvector backend instead of "
+            "Qdrant Cloud. Set PGVECTOR_ENABLED=true after backfill."
+        ),
+    )
+
     # ---- Policy --------------------------------------------------------
     allowed_models: str = Field(
         default="",

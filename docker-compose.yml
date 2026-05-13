@@ -56,7 +56,8 @@ services:
           memory: 1g
 
   postgres:
-    image: postgres:16
+    # ships pgvector extension preinstalled; same PG 16 binary as upstream postgres:16, so pgdata is compatible
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: gateway
