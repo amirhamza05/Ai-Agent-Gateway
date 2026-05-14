@@ -262,7 +262,7 @@ def test_cosine_score_opposite_vectors_is_minus_one() -> None:
     ],
 )
 def test_validate_collection_accepts_valid_names(valid_name: str) -> None:
-    from gateway.upstream.qdrant import validate_collection
+    from gateway.upstream.pgvector import validate_collection
 
     # Should not raise.
     validate_collection(valid_name)
@@ -283,7 +283,7 @@ def test_validate_collection_accepts_valid_names(valid_name: str) -> None:
 )
 def test_validate_collection_rejects_invalid_names(bad_name: str) -> None:
     from fastapi import HTTPException
-    from gateway.upstream.qdrant import validate_collection
+    from gateway.upstream.pgvector import validate_collection
 
     with pytest.raises(HTTPException) as exc_info:
         validate_collection(bad_name)

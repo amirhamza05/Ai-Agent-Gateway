@@ -1,11 +1,9 @@
 """DB-backed credential store with env-var fallback.
 
-Manages the three server-side secrets that can be configured from the
-admin dashboard without a redeploy:
+Manages the server-side secrets that can be configured from the admin
+dashboard without a redeploy:
 
   * ``openrouter_api_key``
-  * ``qdrant_url``
-  * ``qdrant_api_key``
 
 Resolution order: gateway_settings table → env var from Settings.
 If neither source has a value, ``resolve()`` raises :exc:`CredentialMissing`
@@ -34,10 +32,8 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = structlog.get_logger(__name__)
 
 SETTING_OPENROUTER_KEY = "openrouter_api_key"
-SETTING_QDRANT_URL = "qdrant_url"
-SETTING_QDRANT_KEY = "qdrant_api_key"
 
-_ALL_KEYS = {SETTING_OPENROUTER_KEY, SETTING_QDRANT_URL, SETTING_QDRANT_KEY}
+_ALL_KEYS = {SETTING_OPENROUTER_KEY}
 
 
 class CredentialMissing(Exception):
@@ -92,10 +88,6 @@ class CredentialStore:
         s = self._settings
         if key == SETTING_OPENROUTER_KEY and s.openrouter_api_key is not None:
             return s.openrouter_api_key.get_secret_value()
-        if key == SETTING_QDRANT_URL and s.qdrant_url is not None:
-            return s.qdrant_url
-        if key == SETTING_QDRANT_KEY and s.qdrant_api_key is not None:
-            return s.qdrant_api_key.get_secret_value()
 
         raise CredentialMissing(key)
 

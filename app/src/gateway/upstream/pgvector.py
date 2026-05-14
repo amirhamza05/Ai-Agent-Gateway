@@ -1,11 +1,10 @@
-"""pgvector backend for ``/v1/qdrant/search`` and ``/v1/qdrant/upsert``.
+"""pgvector backend for ``/v1/vectors/search`` and ``/v1/vectors/upsert``.
 
-Replaces the Qdrant Cloud httpx proxy when ``settings.pgvector_enabled``
-is True. All three public functions return Qdrant-shaped JSON so the add-in
-sees no difference in the response envelope.
+All public functions return JSON shaped as ``{"result": ..., "status": ...,
+"time": ...}``.
 
-Supported filter DSL (subset of Qdrant's full filter language)
---------------------------------------------------------------
+Supported filter DSL
+--------------------
 Only the shapes actually used by ``SearchGeoswmmDocsTool`` are implemented.
 Anything outside this subset raises ``ValueError("invalid_filter")`` which
 the route layer converts to ``400 {"error": "invalid_filter"}``.
@@ -29,11 +28,12 @@ for un-normalised vectors, [0, 1] for unit-normalised ones.
 
 from __future__ import annotations
 
-import json
+import re
 import time
 from typing import Any
 
 import sqlalchemy as sa
+from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,8 +51,26 @@ from gateway.db.models import Embedding
 _MAX_LIMIT = 200
 
 # hnsw.ef_search controls the recall/speed tradeoff for HNSW ANN queries.
-# 64 is the Qdrant default; expose via settings when tuning is needed.
 _EF_SEARCH = 64
+
+# Strict allow-pattern for collection names: alphanumerics, underscore,
+# dash. Anchored so partial matches (e.g. ``foo/../bar``) are rejected.
+# Capped at 64 chars so a misuse can't dump a megabyte into a query.
+_COLLECTION_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
+
+
+def validate_collection(name: str) -> None:
+    """Reject collection names that don't match the strict allow-pattern.
+
+    Raises :class:`fastapi.HTTPException` with 400 +
+    ``{"error": "invalid_collection_name"}`` so the route layer doesn't
+    need to repeat this check.
+    """
+    if not _COLLECTION_RE.match(name):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "invalid_collection_name"},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +79,7 @@ _EF_SEARCH = 64
 
 
 def _translate_filter(filter_dict: dict[str, Any]) -> list[ColumnElement]:  # type: ignore[type-arg]
-    """Translate a Qdrant filter dict to SQLAlchemy WHERE clauses.
+    """Translate a filter dict to SQLAlchemy WHERE clauses.
 
     Returns a flat list of ``ColumnElement`` objects intended to be
     unpacked into ``.where(*clauses)``. An empty filter dict returns
@@ -171,7 +189,7 @@ async def search(
 ) -> dict[str, Any]:
     """Search ``collection`` for the nearest neighbours of ``vector``.
 
-    Returns a Qdrant-shaped dict::
+    Returns a dict::
 
         {
             "result": [{"id": ..., "score": ..., "payload": ...}, ...],
@@ -184,7 +202,7 @@ async def search(
         collection: Collection name (already validated by the route).
         vector: Query embedding as a Python list of floats.
         limit: Maximum number of results (capped at 200).
-        filter: Optional Qdrant filter dict. Translated via
+        filter: Optional filter dict. Translated via
             :func:`_translate_filter`; unsupported shapes raise ValueError.
         with_payload: If False, omit payload from results. If a dict with
             ``include`` / ``exclude`` keys, project accordingly.
@@ -193,7 +211,7 @@ async def search(
             on a computed label).
 
     Raises:
-        ValueError: If ``filter`` contains unsupported Qdrant DSL shapes.
+        ValueError: If ``filter`` contains unsupported filter DSL shapes.
     """
     limit = min(limit, _MAX_LIMIT)
     started = time.monotonic()
@@ -247,7 +265,7 @@ async def upsert(
 ) -> dict[str, Any]:
     """Upsert ``points`` into ``collection``.
 
-    Returns a Qdrant-shaped dict::
+    Returns a dict::
 
         {"operation_id": <int>, "status": "completed", "time": <seconds>}
 
@@ -305,10 +323,9 @@ def _project_payload(
 ) -> dict[str, Any] | None:
     """Apply an ``include``/``exclude`` selector to a payload dict.
 
-    Mirrors Qdrant's ``with_payload`` selector object behaviour:
     - ``{"include": ["a", "b"]}`` → keep only those keys.
     - ``{"exclude": ["a"]}`` → drop those keys, return the rest.
-    - Both present: include wins (same as Qdrant's precedence).
+    - Both present: include wins.
 
     If ``payload`` is None or the selector is empty, returns payload as-is.
     """

@@ -85,30 +85,6 @@ class Settings(BaseSettings):
         description="OpenRouter base URL (override only for testing).",
     )
 
-    # ---- Qdrant --------------------------------------------------------
-    # Optional: can be left unset in .env and configured from the dashboard.
-    qdrant_url: str | None = Field(
-        default=None,
-        description="Qdrant cluster URL, e.g. https://xxx.cloud.qdrant.io",
-    )
-    qdrant_api_key: SecretStr | None = Field(
-        default=None,
-        description="Qdrant API key. Server-side only.",
-    )
-
-    # ---- pgvector ------------------------------------------------------
-    # Default backend for /v1/qdrant/* is the local Postgres pgvector store.
-    # The flag remains so an operator can temporarily flip back to Qdrant
-    # Cloud (PGVECTOR_ENABLED=false) during the migration window if a bug is
-    # found; it will be removed once the Qdrant path is deleted.
-    pgvector_enabled: bool = Field(
-        default=True,
-        description=(
-            "Route /v1/qdrant/* to the local pgvector backend (default). "
-            "Set PGVECTOR_ENABLED=false to fall back to Qdrant Cloud."
-        ),
-    )
-
     # ---- Policy --------------------------------------------------------
     allowed_models: str = Field(
         default="",

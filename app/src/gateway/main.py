@@ -24,11 +24,10 @@ from gateway.routes.embeddings import router as embeddings_router
 from gateway.routes.health import router as health_router
 from gateway.routes.messages import router as messages_router
 from gateway.routes.models import router as models_router
-from gateway.routes.qdrant import router as qdrant_router
 from gateway.routes.tokens import router as tokens_router
 from gateway.routes.usage import router as usage_router
+from gateway.routes.vectors import router as vectors_router
 from gateway.upstream.openrouter import build_client as build_openrouter_client
-from gateway.upstream.qdrant import build_client as build_qdrant_client
 
 if TYPE_CHECKING:  # pragma: no cover
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, AsyncSession
@@ -70,8 +69,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.redis = redis_client
 
     # ---- Credential store ----------------------------------------------
-    # 30-second TTL cache for gateway_settings (OpenRouter key, Qdrant
-    # URL/key). Resolution order: DB row → env var → CredentialMissing.
+    # 30-second TTL cache for gateway_settings (OpenRouter key).
+    # Resolution order: DB row → env var → CredentialMissing.
     # Invalidated by the dashboard settings POST handler.
     from gateway.credential_store import CredentialStore
     credential_store = CredentialStore(settings, ttl_seconds=30.0)
@@ -123,19 +122,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from gateway.dashboard.vectordb import EmbedProviderStatus
     app.state.embed_provider_status = EmbedProviderStatus()
 
-    # ---- Qdrant HTTP client --------------------------------------------
-    # Separate from OpenRouter because (a) different timeout profile
-    # (no streaming, faster reads), (b) different auth header shape
-    # (``api-key:`` vs. ``Authorization: Bearer``), and (c) lifespan
-    # parity makes it trivial for tests to swap in a respx-mocked
-    # transport per app.
-    # NOTE: when settings.pgvector_enabled is True this client is a
-    # no-op — routes branch before ever touching app.state.qdrant_client.
-    # Safe to delete this block once the flag has been on for 7 days
-    # (migration phase 5 in docs/qdrant-to-pgvector-migration.md §8).
-    qdrant_client = build_qdrant_client()
-    app.state.qdrant_client = qdrant_client
-
     logger.info("startup.complete")
 
     try:
@@ -145,11 +131,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Close in reverse order of opening. HTTP clients first (they
         # might have in-flight requests that need to finish), Redis next,
         # then the SQL engine last.
-        try:
-            await qdrant_client.aclose()
-        except Exception:  # pragma: no cover - best-effort shutdown
-            logger.exception("shutdown.qdrant_close_failed")
-
         try:
             await openrouter_client.aclose()
         except Exception:  # pragma: no cover - best-effort shutdown
@@ -179,7 +160,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="GeoSWMM Gateway",
         version=settings.version,
-        description="Gateway between the GeoSWMM AI add-in and OpenRouter / Qdrant.",
+        description="Gateway between the GeoSWMM AI add-in and OpenRouter, with a local pgvector store.",
         lifespan=lifespan,
         # Default JSON responses are already non-streaming; routes that need
         # SSE override that explicitly in P3.
@@ -261,14 +242,14 @@ def create_app() -> FastAPI:
 
     # P2 — Auth. P3 lands /v1/messages (streaming) and replaces /v1/usage's
     # placeholder with a real aggregate query. P5 adds /v1/embeddings and
-    # /v1/qdrant/*.
+    # /v1/vectors/*.
     app.include_router(auth_router)
     app.include_router(tokens_router)
     app.include_router(usage_router)
     app.include_router(models_router)
     app.include_router(messages_router)
     app.include_router(embeddings_router)
-    app.include_router(qdrant_router)
+    app.include_router(vectors_router)
 
     # Phase D — Admin Dashboard (no /v1 prefix).
     from gateway.dashboard.routes import router as dashboard_router

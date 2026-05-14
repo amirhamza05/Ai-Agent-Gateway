@@ -425,10 +425,10 @@ class DashboardSession(Base):
 class GatewaySettings(Base):
     """Admin-configurable credentials managed from the dashboard settings page.
 
-    One row per key. Supported keys: ``openrouter_api_key``, ``qdrant_url``,
-    ``qdrant_api_key``. A missing row means "fall back to the env var".
-    Values are stored as plaintext — the DB is on the same machine as
-    the ``.env`` file, so no additional exposure is introduced.
+    One row per key. Supported keys: ``openrouter_api_key``. A missing
+    row means "fall back to the env var". Values are stored as plaintext
+    — the DB is on the same machine as the ``.env`` file, so no
+    additional exposure is introduced.
     """
 
     __tablename__ = "gateway_settings"
@@ -512,13 +512,13 @@ class ModelPricing(Base):
 
 
 class Embedding(Base):
-    """A stored vector embedding, replacing the Qdrant Cloud backend.
+    """A stored vector embedding for the /v1/vectors/* endpoints.
 
     Each row maps a ``(collection, point_id)`` pair to a 1536-dimensional
-    embedding vector and an arbitrary JSONB payload (the Qdrant "payload"
-    concept). The unique constraint on ``(collection, point_id)`` is the
-    upsert key: ``INSERT ... ON CONFLICT DO UPDATE`` updates the embedding
-    and payload in place without producing a duplicate row.
+    embedding vector and an arbitrary JSONB payload. The unique
+    constraint on ``(collection, point_id)`` is the upsert key:
+    ``INSERT ... ON CONFLICT DO UPDATE`` updates the embedding and
+    payload in place without producing a duplicate row.
 
     Dimension is fixed at 1536 — covers OpenAI ``text-embedding-3-small``
     and Voyage ``voyage-3-lite``. If a future provider needs a different
@@ -533,7 +533,7 @@ class Embedding(Base):
     * ``embeddings_collection_idx`` — btree on ``collection``, used by every
       search/upsert that filters to a specific collection.
     * ``embeddings_payload_gin`` — GIN with ``jsonb_path_ops`` on ``payload``,
-      used by the Qdrant-compatible filter translator (``payload @> ...``).
+      used by the filter translator (``payload @> ...``).
     * ``embeddings_hnsw_cos`` — HNSW with ``vector_cosine_ops`` for ANN search.
       Built via ``op.execute`` in the migration because Alembic's
       ``op.create_index`` does not model HNSW storage parameters.

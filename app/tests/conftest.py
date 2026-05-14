@@ -33,8 +33,6 @@ _DEFAULT_TEST_ENV = {
     "REDIS_URL": "redis://redis:6379/1",
     "JWT_SECRET": "test-jwt-secret-do-not-use-in-prod",
     "OPENROUTER_API_KEY": "sk-or-test",
-    "QDRANT_URL": "https://test.cloud.qdrant.io",
-    "QDRANT_API_KEY": "test-qdrant-key",
     # Match .env.example so ``model_not_allowed`` tests behave the same
     # in CI as they do against a real .env. Tests that need a different
     # allow-list can override per-test via env vars before importing the
@@ -340,28 +338,6 @@ def openrouter_mock():  # type: ignore[no-untyped-def]
         base_url="https://openrouter.ai/api/v1",
         assert_all_called=False,
     ) as router:
-        yield router
-
-
-@pytest.fixture
-def qdrant_mock():  # type: ignore[no-untyped-def]
-    """Yield a ``respx.MockRouter`` patched onto the gateway's Qdrant URL.
-
-    Mirrors :func:`openrouter_mock` but pointed at ``QDRANT_URL`` so the
-    Qdrant routes' upstream client gets intercepted. The default value
-    in the test env is ``https://test.cloud.qdrant.io``; tests that set a
-    different ``QDRANT_URL`` would need to update this fixture too.
-
-    ``assert_all_called=False`` for the same reason as the OpenRouter
-    fixture: negative tests (e.g. 400 from collection-name validation)
-    don't actually reach upstream.
-    """
-    import os
-
-    import respx
-
-    base_url = os.environ.get("QDRANT_URL", "https://test.cloud.qdrant.io")
-    with respx.mock(base_url=base_url, assert_all_called=False) as router:
         yield router
 
 

@@ -428,12 +428,12 @@ async def test_usage_returns_summed_costs(
                 response_bytes=2,
             )
         )
-        # One qdrant.search row (cost 0).
+        # One vectors.search row (cost 0).
         session.add(
             RequestLog(
                 request_id=uuid4(),
                 user_id=user_id,
-                endpoint="qdrant.search",
+                endpoint="vectors.search",
                 model=None,
                 tokens_in=0,
                 tokens_out=0,
@@ -460,7 +460,7 @@ async def test_usage_returns_summed_costs(
 
     # P5: per-endpoint breakdown.
     endpoints = body["endpoints"]
-    assert set(endpoints.keys()) == {"messages", "embeddings", "qdrant.search"}
+    assert set(endpoints.keys()) == {"messages", "embeddings", "vectors.search"}
     assert endpoints["messages"]["requests"] == 2
     assert endpoints["messages"]["spent_usd"] == pytest.approx(0.003, abs=1e-9)
     assert endpoints["messages"]["tokens_in"] == 300
@@ -469,5 +469,5 @@ async def test_usage_returns_summed_costs(
     assert endpoints["embeddings"]["spent_usd"] == pytest.approx(0.000001, abs=1e-9)
     assert endpoints["embeddings"]["tokens_in"] == 42
     assert endpoints["embeddings"]["tokens_out"] == 0
-    assert endpoints["qdrant.search"]["requests"] == 1
-    assert endpoints["qdrant.search"]["spent_usd"] == 0.0
+    assert endpoints["vectors.search"]["requests"] == 1
+    assert endpoints["vectors.search"]["spent_usd"] == 0.0
