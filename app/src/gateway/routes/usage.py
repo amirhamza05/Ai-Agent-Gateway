@@ -6,8 +6,8 @@ Phase 3 swapped the placeholder zeros for a real aggregate query against
 the calendar month, matching the cap semantics.
 
 Phase 5 adds an ``endpoints`` breakdown so callers can see how spend
-distributes across ``messages``, ``embeddings``, ``qdrant.search``, and
-``qdrant.upsert``. The breakdown is a second indexed query over the same
+distributes across ``messages``, ``embeddings``, ``vectors.search``, and
+``vectors.upsert``. The breakdown is a second indexed query over the same
 predicate; we avoid a single ``GROUPING SETS`` query because two simple
 ``GROUP BY`` queries are easier to reason about and the difference is
 sub-millisecond on the indexed read path.
@@ -48,7 +48,7 @@ async def get_usage(
     * Top-level totals — ``spent_usd``, ``request_count``, ``tokens_in``,
       ``tokens_out`` summed across every endpoint.
     * ``endpoints`` — a per-endpoint dict (``messages``, ``embeddings``,
-      ``qdrant.search``, ``qdrant.upsert``, ...) with the same shape so
+      ``vectors.search``, ``vectors.upsert``, ...) with the same shape so
       the add-in can render a breakdown without computing it client-side.
     """
     period_start_expr = func.date_trunc("month", func.now())
