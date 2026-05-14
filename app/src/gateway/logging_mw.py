@@ -9,7 +9,7 @@ So the streaming handler in :mod:`gateway.routes.messages` calls
 :func:`insert_request_log` directly.
 
 P4 / P5 will add a middleware in this same module for the non-streaming
-``/v1/embeddings`` and ``/v1/qdrant/*`` endpoints. Keeping the helper
+``/v1/embeddings`` and ``/v1/vectors/*`` endpoints. Keeping the helper
 function here means the streaming and non-streaming paths converge on
 one INSERT shape.
 """

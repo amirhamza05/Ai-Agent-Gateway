@@ -80,7 +80,6 @@
       "Bash(cat ./.env)",
       "Bash(cat **/.env)",
       "Bash(echo $OPENROUTER_API_KEY)",
-      "Bash(echo $QDRANT_API_KEY)",
       "Bash(echo $JWT_SECRET)",
       "Bash(echo $POSTGRES_PASSWORD)",
       "Bash(env)",

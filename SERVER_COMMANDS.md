@@ -61,7 +61,7 @@ Fill in **at minimum**:
 - `JWT_SECRET` — generate with: `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`
 - `PUBLIC_HOSTNAME` — your domain, e.g. `api.your-domain.com`
 
-You can leave `OPENROUTER_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY` blank — set them from the dashboard later.
+You can leave `OPENROUTER_API_KEY` blank — set it from the dashboard later.
 
 Save and exit nano: `Ctrl+O`, `Enter`, `Ctrl+X`.
 
@@ -106,7 +106,7 @@ Open `http://YOUR_SERVER_IP:8000/dashboard/login` (or `https://YOUR_DOMAIN/dashb
 Login as `admin@gmail.com` / `password`.
 
 Then in the dashboard:
-- **Settings** page → enter `OPENROUTER_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`.
+- **Settings** page → enter `OPENROUTER_API_KEY`.
 - **Models** page → add the model pricing rows you want to allow.
 - **Users → New User** → create a real admin and deactivate `admin@gmail.com`.
 

@@ -11,15 +11,15 @@ Adds:
   ``postgres:16``) for this to succeed. See §5 of the migration plan.
 
 * ``embeddings`` table — stores 1536-dimensional vector embeddings with an
-  arbitrary JSONB payload, replacing the Qdrant Cloud backend. Upsert key
-  is ``(collection, point_id)``; unique constraint named
-  ``uq_embeddings_collection_point`` enforces it at the DB level.
+  arbitrary JSONB payload. Upsert key is ``(collection, point_id)``; unique
+  constraint named ``uq_embeddings_collection_point`` enforces it at the DB
+  level.
 
 * Three indexes:
   - ``embeddings_collection_idx`` — btree on ``collection`` for per-collection
     filtering on every search and upsert call.
   - ``embeddings_payload_gin`` — GIN with ``jsonb_path_ops`` on ``payload``
-    for Qdrant-compatible filter queries (``payload @> '{"key": "val"}'``).
+    for containment filter queries (``payload @> '{"key": "val"}'``).
   - ``embeddings_hnsw_cos`` — HNSW on ``embedding`` using
     ``vector_cosine_ops`` (m=16, ef_construction=64). Must be created via
     ``op.execute`` because Alembic's ``op.create_index`` cannot express HNSW
@@ -28,8 +28,7 @@ Adds:
 downgrade() drops the three indexes and the table but does NOT drop the
 extension — other queries or future tables may depend on it.
 
-Schema-only migration. No seed data. Real backfill comes from the
-``gateway-admin migrate-qdrant`` CLI (§7 of the migration plan).
+Schema-only migration. No seed data.
 """
 
 from __future__ import annotations
@@ -104,7 +103,7 @@ def upgrade() -> None:
 
     # 3c. HNSW index for approximate nearest-neighbour cosine search.
     #     op.create_index cannot express HNSW storage parameters, so we use
-    #     raw SQL. m=16 and ef_construction=64 match Qdrant Cloud defaults.
+    #     raw SQL.
     op.execute(
         "CREATE INDEX embeddings_hnsw_cos ON embeddings "
         "USING hnsw (embedding vector_cosine_ops) "

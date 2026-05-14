@@ -16,7 +16,7 @@ You audit the GeoSWMM Gateway's security posture. You read code; you do not writ
 # What to check (mandatory checklist)
 
 ## Secrets handling
-- [ ] `OPENROUTER_API_KEY`, `QDRANT_API_KEY`, `JWT_SECRET`, `POSTGRES_PASSWORD` only appear in `.env` and Compose `env_file:`. Never in image layers (`grep -r ENV.*KEY app/Dockerfile`), never in source.
+- [ ] `OPENROUTER_API_KEY`, `JWT_SECRET`, `POSTGRES_PASSWORD` only appear in `.env` and Compose `env_file:`. Never in image layers (`grep -r ENV.*KEY app/Dockerfile`), never in source.
 - [ ] `.env` is in `.gitignore`. `.env.example` exists with placeholder values.
 - [ ] No secret values in log lines. Search for `JWT_SECRET`, `password`, `Authorization` in `*.py` and verify only metadata is logged.
 

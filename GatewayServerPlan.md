@@ -1,14 +1,15 @@
-# Gateway Server Plan — OpenRouter + Qdrant Proxy for GeoSWMM AI
+# Gateway Server Plan — OpenRouter Proxy + Local pgvector for GeoSWMM AI
 
 **Status:** Proposed
 **Last updated:** 2026-05-09
 **Audience:** server implementer, add-in maintainer
 **Scope:** one-month trial deployment on a 4 vCPU / 4 GB / 20 GB Ubuntu 24.04 VPS
 
-A small backend that sits between the GeoSWMM AI add-in and the upstream model
-providers. Your website holds the OpenRouter and Qdrant API keys; the add-in
-holds only a per-user login token. Every request is logged with full bodies
-for the trial month so you can audit traffic, compute cost, and debug.
+A small backend that sits between the GeoSWMM AI add-in and OpenRouter, with a
+local pgvector store for embeddings/RAG. Your website holds the OpenRouter API
+key; the add-in holds only a per-user login token. Every request is logged
+with full bodies for the trial month so you can audit traffic, compute cost,
+and debug.
 
 ---
 
@@ -16,7 +17,7 @@ for the trial month so you can audit traffic, compute cost, and debug.
 
 **Goals**
 
-- Add-in never sees an OpenRouter or Qdrant key — only a user token from your site.
+- Add-in never sees an OpenRouter key — only a user token from your site.
 - Streaming chat responses pass through with no buffering (first-token latency stays low).
 - Every request and response is logged for one month, including bodies (capped per row).
 - One `docker compose up` deploys the whole stack on a fresh VPS.
@@ -56,7 +57,6 @@ flowchart LR
     end
 
     OR[(OpenRouter)]
-    QD[(Qdrant Cloud)]
 
     Pro --> AddIn
     AddIn -- HTTPS + Bearer token --> Caddy
@@ -64,11 +64,11 @@ flowchart LR
     App <--> PG
     App <--> RD
     App -- server-side OpenRouter key --> OR
-    App -- server-side Qdrant key --> QD
 ```
 
-The trust boundary is the gateway. OpenRouter and Qdrant secrets live only in
-the VPS's `.env` file and never leave it.
+The trust boundary is the gateway. The OpenRouter secret lives only in the
+VPS's `.env` file (or `gateway_settings` table) and never leaves it. Vector
+storage is the local `embeddings` table served by pgvector.
 
 ---
 
@@ -118,8 +118,8 @@ All authenticated endpoints require `Authorization: Bearer <access_token>`.
 | POST | `/auth/logout` | Revoke refresh token. |
 | POST | `/v1/messages` | **Streaming passthrough** to `https://openrouter.ai/api/v1/messages`. |
 | POST | `/v1/embeddings` | Non-streaming passthrough to OpenRouter or embedding provider. |
-| POST | `/v1/qdrant/search` | Forward `{collection, vector, limit, filter}` to Qdrant `/collections/{c}/points/search`. |
-| POST | `/v1/qdrant/upsert` | Forward to Qdrant points upsert. (Optional — only if the add-in writes back.) |
+| POST | `/v1/vectors/search` | ANN search over the local pgvector `embeddings` table. Returns `{result, status, time}`. |
+| POST | `/v1/vectors/upsert` | Upsert `{collection, points}` into the local pgvector `embeddings` table. |
 | GET  | `/v1/usage` | Current month's `tokens_in/out`, `cost_usd`, request count for the caller. |
 | GET  | `/healthz` | Liveness. No auth. |
 
@@ -193,7 +193,7 @@ CREATE TABLE request_log (
   id BIGSERIAL PRIMARY KEY,
   request_id UUID NOT NULL,
   user_id UUID REFERENCES users(id),
-  endpoint TEXT NOT NULL,                -- 'messages' | 'embeddings' | 'qdrant.search' | ...
+  endpoint TEXT NOT NULL,                -- 'messages' | 'embeddings' | 'vectors.search' | ...
   model TEXT,
   tokens_in INT,
   tokens_out INT,
@@ -337,11 +337,11 @@ geoswmm-gateway/
         ├── routes/
         │   ├── messages.py         # POST /v1/messages — streaming
         │   ├── embeddings.py       # POST /v1/embeddings
-        │   ├── qdrant.py           # POST /v1/qdrant/*
+        │   ├── vectors.py          # POST /v1/vectors/*
         │   └── usage.py            # GET /v1/usage
         ├── upstream/
         │   ├── openrouter.py       # async httpx client + key
-        │   └── qdrant.py           # async httpx client + key
+        │   └── pgvector.py         # local pgvector backend
         ├── logging_mw.py           # writes one request_log row per call
         ├── ratelimit.py            # Redis token bucket
         ├── billing.py              # PRICES_PER_MTOKEN + cap check
@@ -427,8 +427,6 @@ DATABASE_URL=postgresql+asyncpg://gateway:...@postgres:5432/gateway
 REDIS_URL=redis://redis:6379/0
 JWT_SECRET=...
 OPENROUTER_API_KEY=sk-or-...
-QDRANT_URL=https://....cloud.qdrant.io
-QDRANT_API_KEY=...
 ALLOWED_MODELS=claude-opus-4-7,claude-sonnet-4-6,claude-haiku-4-5
 DEFAULT_MONTHLY_USD_CAP=10.00
 MAX_BODY_BYTES=32000
@@ -444,8 +442,8 @@ Touch points in this repo:
 |---|---|
 | [GeoSWMMAI/Agent/ProviderConfig.cs](../GeoSWMMAI/Agent/ProviderConfig.cs) | Add `BackendBaseUrl` and `UserAccessToken` / `UserRefreshToken`. Deprecate the direct OpenRouter key path or hide it behind a "self-hosted" toggle. |
 | [GeoSWMMAI/Agent/ChatAgent.cs](../GeoSWMMAI/Agent/ChatAgent.cs) | Construct `AnthropicClient` with `ApiUrlFormat = $"{BackendBaseUrl}/v1/{{0}}/{{1}}"` (or whichever overload the SDK exposes) and the user access token as bearer. No other changes — wire format is identical. |
-| New `GeoSWMMAI/Agent/GatewayClient.cs` | Thin `HttpClient` wrapper used by the embedding + Qdrant tools. Handles 401 → refresh → retry once. Adds `X-Client-Request-Id` header so server logs and add-in `ToolTrace` rows can be correlated. |
-| [GeoSWMMAI/Tools/SearchGeoswmmDocsTool.cs](../GeoSWMMAI/Tools/SearchGeoswmmDocsTool.cs) | Switch HTTP base from OpenRouter/Qdrant direct URLs to gateway endpoints. |
+| New `GeoSWMMAI/Agent/GatewayClient.cs` | Thin `HttpClient` wrapper used by the embedding + vector tools. Handles 401 → refresh → retry once. Adds `X-Client-Request-Id` header so server logs and add-in `ToolTrace` rows can be correlated. |
+| [GeoSWMMAI/Tools/SearchGeoswmmDocsTool.cs](../GeoSWMMAI/Tools/SearchGeoswmmDocsTool.cs) | Switch HTTP base from upstream direct URLs to the gateway's `/v1/vectors/*` endpoints. |
 | [GeoSWMMAI/DockPanes/ApiKeyPromptWindow.xaml](../GeoSWMMAI/DockPanes/ApiKeyPromptWindow.xaml) + .cs | Replace API-key textbox with email + password fields (or a "Sign in" button that opens browser-based OAuth later). |
 | [GeoSWMMAI/Secrets/DpapiSecretsStore.cs](../GeoSWMMAI/Secrets/DpapiSecretsStore.cs) | No code change — same DPAPI envelope, different secret payload (now `{access_token, refresh_token, expires_at}` JSON). |
 
@@ -464,7 +462,7 @@ Each phase is one focused work session and lands behind a clear demo.
 | **P2 — Auth** | `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout` work with JWT + argon2 + refresh-token rotation. | Login from `httpie`, hit a protected `/v1/usage` endpoint with the bearer token. |
 | **P3 — Messages passthrough** | `/v1/messages` streams from OpenRouter to the client and writes a `request_log` row with body + tokens + cost. | `curl --no-buffer` against the gateway prints SSE chunks identical to direct OpenRouter; a row appears in `request_log`. |
 | **P4 — Safety nets** | Redis token-bucket rate limit, monthly cost cap check, body truncation, Docker log cap, host disk-usage alert. | A loop blasting 100 req/sec gets 429s; a fake user with `monthly_usd_cap=0.01` gets 402. |
-| **P5 — Embeddings + Qdrant** | `/v1/embeddings`, `/v1/qdrant/search`, `/v1/qdrant/upsert` proxy and log. | The add-in's `SearchGeoswmmDocsTool` runs end-to-end via the gateway. |
+| **P5 — Embeddings + vectors** | `/v1/embeddings`, `/v1/vectors/search`, `/v1/vectors/upsert` proxy and log. | The add-in's `SearchGeoswmmDocsTool` runs end-to-end via the gateway. |
 | **P6 — Add-in cutover** | `ProviderConfig` + `ChatAgent` + `ApiKeyPromptWindow` updated. Add-in logs in once, holds tokens in DPAPI, talks only to the gateway. | Fresh Pro install with no OpenRouter key, full chat session works. |
 | **P7 — Trial-end backup** | `pg_dump` script + storage-box upload. | Weekly dump file appears off-box; restore tested locally. |
 

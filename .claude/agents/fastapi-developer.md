@@ -5,7 +5,7 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
 ---
 
-You implement FastAPI code for the GeoSWMM Gateway, a streaming proxy in front of OpenRouter and Qdrant.
+You implement FastAPI code for the GeoSWMM Gateway, a streaming proxy in front of OpenRouter with a local pgvector store.
 
 # Source of truth
 

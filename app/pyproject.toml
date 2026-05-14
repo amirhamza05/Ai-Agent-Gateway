@@ -1,7 +1,7 @@
 [project]
 name = "gateway"
 version = "0.1.0"
-description = "GeoSWMM Gateway — FastAPI proxy for OpenRouter and Qdrant."
+description = "GeoSWMM Gateway — FastAPI proxy for OpenRouter, with a local pgvector store."
 requires-python = ">=3.12,<3.13"
 license = { text = "Proprietary" }
 authors = [

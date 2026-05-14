@@ -28,8 +28,8 @@ if (-not (Test-Path -LiteralPath ".env")) {
 
     copy .env.example .env
 
-Required keys: POSTGRES_PASSWORD, DATABASE_URL, JWT_SECRET, OPENROUTER_API_KEY,
-QDRANT_URL, QDRANT_API_KEY. See CLAUDE.md > 'Local development'.
+Required keys: POSTGRES_PASSWORD, DATABASE_URL, JWT_SECRET, OPENROUTER_API_KEY.
+See CLAUDE.md > 'Local development'.
 "@
     exit 1
 }

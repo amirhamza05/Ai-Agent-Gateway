@@ -7,9 +7,9 @@ Create Date: 2026-05-10 00:00:00.000000
 Adds:
 
 * ``gateway_settings`` table — key/value store for admin-configurable
-  credentials (OpenRouter API key, Qdrant URL, Qdrant API key).
-  Values here take precedence over .env vars so operators can rotate
-  keys from the dashboard without a redeploy.
+  credentials (e.g. OpenRouter API key). Values here take precedence over
+  .env vars so operators can rotate keys from the dashboard without a
+  redeploy.
 
 Downgrade drops the table.
 """

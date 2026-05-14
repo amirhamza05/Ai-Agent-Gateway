@@ -1,5 +1,5 @@
-"""Async HTTP clients for upstream providers — populated in Phase 3+.
+"""Async upstream adapters.
 
-P3 adds ``openrouter.py``; P5 adds ``qdrant.py``. Both wrap a shared
-:class:`httpx.AsyncClient` and inject the relevant API key from settings.
+* :mod:`openrouter` — httpx client for the OpenRouter API.
+* :mod:`pgvector` — local Postgres pgvector backend used by /v1/vectors/*.
 """

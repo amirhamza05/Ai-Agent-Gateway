@@ -28,8 +28,8 @@ def _database_url() -> str:
 
     We don't go through :class:`gateway.config.Settings` because the CLI
     must boot in containers that don't carry every API-side setting
-    (e.g. ``OPENROUTER_API_KEY``, ``QDRANT_API_KEY``). ``DATABASE_URL``
-    is the only env var we actually need.
+    (e.g. ``OPENROUTER_API_KEY``). ``DATABASE_URL`` is the only env var
+    we actually need.
     """
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:

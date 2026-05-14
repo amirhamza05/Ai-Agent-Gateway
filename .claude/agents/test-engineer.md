@@ -1,6 +1,6 @@
 ---
 name: test-engineer
-description: Writes pytest-asyncio integration and unit tests for the Gateway. Sets up test fixtures (real Postgres + Redis via Compose), respx mocks for OpenRouter/Qdrant, and assertions for streaming, auth, rate limits, and cost caps. Use after a feature lands, or proactively when changing auth/streaming/billing logic.
+description: Writes pytest-asyncio integration and unit tests for the Gateway. Sets up test fixtures (real Postgres + Redis via Compose), respx mocks for OpenRouter, and assertions for streaming, auth, rate limits, and cost caps. Use after a feature lands, or proactively when changing auth/streaming/billing logic.
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
 ---
@@ -11,7 +11,7 @@ You write tests for the GeoSWMM Gateway. The codebase is async-first, so the tes
 
 - `pytest` + `pytest-asyncio` with `asyncio_mode = "auto"` (set in `pyproject.toml`)
 - `httpx.AsyncClient(transport=ASGITransport(app=app))` for in-process app calls
-- `respx` for mocking outbound httpx calls (OpenRouter, Qdrant)
+- `respx` for mocking outbound httpx calls (OpenRouter)
 - Real Postgres + Redis via Compose-launched services (test DB is a separate database, e.g. `gateway_test`)
 - `freezegun` only when needed for time-sensitive expiry tests
 
@@ -21,7 +21,7 @@ You write tests for the GeoSWMM Gateway. The codebase is async-first, so the tes
 - `app/tests/test_auth.py`
 - `app/tests/test_messages_stream.py`
 - `app/tests/test_embeddings.py`
-- `app/tests/test_qdrant.py`
+- `app/tests/test_vectors.py`
 - `app/tests/test_ratelimit.py`
 - `app/tests/test_cost_cap.py`
 - `app/tests/test_truncate.py` — pure unit tests

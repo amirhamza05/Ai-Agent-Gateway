@@ -40,7 +40,7 @@ You own the streaming passthrough between the Gateway and OpenRouter. This is th
 
 # What you don't do
 
-- Don't write embeddings or Qdrant routes — those are non-streaming, owned by `fastapi-developer`.
+- Don't write embeddings or vector routes — those are non-streaming, owned by `fastapi-developer`.
 - Don't author DB models — coordinate with `db-engineer` for the `request_log` insert helper.
 - Don't decide pricing or auth logic — coordinate with `fastapi-developer` for `require_user` and `billing.check_cap`.
 

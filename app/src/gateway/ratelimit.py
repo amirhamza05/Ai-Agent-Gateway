@@ -1,7 +1,7 @@
 """Redis-backed token-bucket rate limiter.
 
 Per §9 of the plan: every authenticated request to ``/v1/messages`` (and
-later ``/v1/embeddings``, ``/v1/qdrant/*``) is gated by a per-user QPM
+later ``/v1/embeddings``, ``/v1/vectors/*``) is gated by a per-user QPM
 budget. We use a token bucket because it tolerates short bursts while
 holding the long-run average — the right shape for a chat client that
 sends a flurry on agent-iteration boundaries and then idles.
