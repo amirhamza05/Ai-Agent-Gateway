@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% from "partials/icons.html" import icon %}
+{% block title %}Import preview — GeoSWMM Admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>Import preview</h1>
+    <p class="subtitle">
+      <strong data-row-count>{{ row_count }} row{{ '' if row_count == 1 else 's' }}</strong>
+      from <code class="mono">{{ filename }}</code>
+      → collection <span class="chip chip--ink chip--mono">{{ collection }}</span>.
+      Embeddings are generated only when you click <em>Import</em>.
+    </p>
+  </div>
+  <div class="page-header__actions">
+    <a class="btn btn--ghost" href="/dashboard/vectordb/import">← Change file</a>
+  </div>
+</header>
+
+<form method="post" action="/dashboard/vectordb/import" class="col" style="gap: 14px; margin-bottom: 18px;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="collection" value="{{ collection }}">
+  <textarea name="payload_blob" data-payload-blob style="display: none;">{{ payload_blob }}</textarea>
+
+  <article class="card card--pad" style="display: flex; align-items: center; justify-content: space-between; gap: 14px;">
+    <div>
+      <div style="font-size: 14px; color: var(--ink-900);">
+        Ready to import <strong data-row-count>{{ row_count }} embedding{{ '' if row_count == 1 else 's' }}</strong>.
+      </div>
+      <div class="muted" style="font-size: 12px;">
+        Bulk embedded with <code class="mono">openai/text-embedding-3-small</code>; existing
+        <code class="mono">(collection, point_id)</code> pairs are updated in place.
+      </div>
+    </div>
+    <div style="display: flex; gap: 10px;">
+      <a class="btn btn--ghost" href="/dashboard/vectordb">Cancel</a>
+      <button type="submit" class="btn btn--primary" data-import-btn>
+        {{ icon('download') }} <span class="btn-label" data-row-count-label>Import {{ row_count }} row{{ '' if row_count == 1 else 's' }}</span>
+      </button>
+    </div>
+  </article>
+</form>
+
+<section class="col" data-rows style="gap: 12px;">
+  {% for row in rows %}
+    <article class="card card--pad" data-row>
+      <header style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px;">
+        <span class="chip chip--mono" data-row-num>#{{ loop.index }}</span>
+        <span data-row-title style="font-weight: 600; color: var(--ink-900); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; {% if not row.title %}display: none;{% endif %}">{{ row.title or '' }}</span>
+        <a data-row-source href="{{ row.source_url or '#' }}" target="_blank" rel="noopener" class="muted mono" style="font-size: 11px; {% if not row.source_url %}display: none;{% endif %}">{{ row.source_url or '' }}</a>
+        <span style="display: inline-flex; gap: 4px;">
+          <button type="button" class="btn btn--ghost btn--sm" data-action="edit">{{ icon('edit') }} Edit</button>
+          <button type="button" class="btn btn--danger btn--sm" data-action="remove">{{ icon('trash') }} Remove</button>
+        </span>
+      </header>
+
+      <div data-view>
+        <div data-row-heading class="muted" style="font-size: 12px; margin-bottom: 6px; {% if not row.heading_path %}display: none;{% endif %}">
+          {% if row.heading_path %}
+            {% if row.heading_path is iterable and row.heading_path is not string %}
+              {{ row.heading_path | join(' › ') }}
+            {% else %}
+              {{ row.heading_path }}
+            {% endif %}
+          {% endif %}
+        </div>
+
+        <div data-row-text style="font-size: 13px; line-height: 1.55; color: var(--ink-900); white-space: pre-wrap; max-height: 220px; overflow: auto; border-left: 3px solid var(--ink-100); padding: 4px 10px; {% if not row.text %}display: none;{% endif %}">{{ row.text or '' }}</div>
+
+        <details style="margin-top: 8px;">
+          <summary class="muted" style="font-size: 12px; cursor: pointer;">Full payload</summary>
+          <pre data-row-json class="mono" style="font-size: 11px; margin-top: 6px; padding: 8px; background: var(--ink-50, #f5f5f5); border-radius: 4px; overflow: auto; max-height: 260px;">{{ row | tojson(indent=2) }}</pre>
+        </details>
+      </div>
+
+      <div data-edit style="display: none;">
+        <label class="field" style="margin-bottom: 6px;">
+          <span class="field__label">Payload JSON <span class="field__required">*</span></span>
+          <textarea data-edit-input class="field__textarea mono" rows="10"
+                    style="font-size: 12px; line-height: 1.5;"></textarea>
+          <span class="field__hint">Must be a JSON object with a non-empty <code class="mono">text</code> field.</span>
+        </label>
+        <div data-edit-error class="muted" style="color: var(--danger, #c0392b); font-size: 12px; min-height: 16px; margin-bottom: 6px;"></div>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn btn--primary btn--sm" data-action="save">{{ icon('check') }} Save</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-action="cancel">Cancel</button>
+        </div>
+      </div>
+    </article>
+  {% endfor %}
+</section>
+
+<div data-empty-state class="muted" style="display: none; padding: 24px; text-align: center; font-size: 13px;">
+  All rows removed. <a href="/dashboard/vectordb/import">Upload a different file</a> to continue.
+</div>
+
+{% endblock %}
+
+{% block body_extra %}
+<script>
+(function () {
+  const blobEl   = document.querySelector('[data-payload-blob]');
+  const section  = document.querySelector('[data-rows]');
+  const importBtn = document.querySelector('[data-import-btn]');
+  const emptyEl  = document.querySelector('[data-empty-state]');
+
+  if (!blobEl || !section) return;
+
+  let state;
+  try { state = JSON.parse(blobEl.value); } catch (e) { state = []; }
+
+  function plural(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); }
+
+  function syncBlob() {
+    blobEl.value = JSON.stringify(state);
+  }
+
+  function articleIndex(art) {
+    return Array.from(section.querySelectorAll('[data-row]')).indexOf(art);
+  }
+
+  function renumber() {
+    section.querySelectorAll('[data-row-num]').forEach((el, i) => {
+      el.textContent = '#' + (i + 1);
+    });
+  }
+
+  function updateCounts() {
+    const n = state.length;
+    document.querySelectorAll('[data-row-count]').forEach((el) => {
+      // Pick the leading noun from the original text so we keep both
+      // "rows" and "embeddings" labels in their original places.
+      const txt = el.textContent;
+      const noun = /embedding/i.test(txt) ? 'embedding' : 'row';
+      el.textContent = plural(n, noun);
+    });
+    const label = document.querySelector('[data-row-count-label]');
+    if (label) label.textContent = 'Import ' + plural(n, 'row');
+    if (importBtn) importBtn.disabled = n === 0;
+    if (emptyEl) emptyEl.style.display = n === 0 ? '' : 'none';
+  }
+
+  function refreshRowView(art, row) {
+    const tit  = art.querySelector('[data-row-title]');
+    const src  = art.querySelector('[data-row-source]');
+    const head = art.querySelector('[data-row-heading]');
+    const txt  = art.querySelector('[data-row-text]');
+    const json = art.querySelector('[data-row-json]');
+    if (tit) {
+      tit.textContent = row.title || '';
+      tit.style.display = row.title ? '' : 'none';
+    }
+    if (src) {
+      src.textContent = row.source_url || '';
+      src.href = row.source_url || '#';
+      src.style.display = row.source_url ? '' : 'none';
+    }
+    if (head) {
+      const hp = row.heading_path;
+      if (Array.isArray(hp)) head.textContent = hp.join(' › ');
+      else if (hp) head.textContent = String(hp);
+      else head.textContent = '';
+      head.style.display = hp ? '' : 'none';
+    }
+    if (txt) {
+      txt.textContent = row.text || '';
+      txt.style.display = row.text ? '' : 'none';
+    }
+    if (json) json.textContent = JSON.stringify(row, null, 2);
+  }
+
+  section.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const art = btn.closest('[data-row]');
+    if (!art) return;
+    const action = btn.dataset.action;
+
+    if (action === 'remove') {
+      if (!confirm('Remove this row from the import?')) return;
+      const idx = articleIndex(art);
+      if (idx < 0) return;
+      state.splice(idx, 1);
+      art.remove();
+      renumber();
+      updateCounts();
+      syncBlob();
+      return;
+    }
+
+    if (action === 'edit') {
+      const idx = articleIndex(art);
+      if (idx < 0) return;
+      const view = art.querySelector('[data-view]');
+      const editor = art.querySelector('[data-edit]');
+      const input = art.querySelector('[data-edit-input]');
+      input.value = JSON.stringify(state[idx], null, 2);
+      art.querySelector('[data-edit-error]').textContent = '';
+      view.style.display = 'none';
+      editor.style.display = '';
+      input.focus();
+      return;
+    }
+
+    if (action === 'cancel') {
+      art.querySelector('[data-view]').style.display = '';
+      art.querySelector('[data-edit]').style.display = 'none';
+      art.querySelector('[data-edit-error]').textContent = '';
+      return;
+    }
+
+    if (action === 'save') {
+      const idx = articleIndex(art);
+      if (idx < 0) return;
+      const input = art.querySelector('[data-edit-input]');
+      const errEl = art.querySelector('[data-edit-error]');
+      let parsed;
+      try {
+        parsed = JSON.parse(input.value);
+      } catch (err) {
+        errEl.textContent = 'Invalid JSON: ' + err.message;
+        return;
+      }
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        errEl.textContent = 'Payload must be a JSON object.';
+        return;
+      }
+      if (typeof parsed.text !== 'string' || !parsed.text.trim()) {
+        errEl.textContent = "'text' field is required and must be a non-empty string.";
+        return;
+      }
+      state[idx] = parsed;
+      refreshRowView(art, parsed);
+      art.querySelector('[data-view]').style.display = '';
+      art.querySelector('[data-edit]').style.display = 'none';
+      errEl.textContent = '';
+      syncBlob();
+      return;
+    }
+  });
+
+  updateCounts();
+})();
+</script>
+{% endblock %}

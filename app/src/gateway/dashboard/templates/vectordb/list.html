@@ -9,6 +9,7 @@
   </div>
   <div class="page-header__actions">
     <a class="btn btn--secondary" href="/dashboard/vectordb/search">{{ icon('search') }} Search</a>
+    <a class="btn btn--secondary" href="/dashboard/vectordb/import">{{ icon('download') }} Import JSONL</a>
     <a class="btn btn--primary" href="/dashboard/vectordb/new">{{ icon('plus') }} New embedding</a>
   </div>
 </header>
@@ -24,13 +25,22 @@
 </form>
 
 <article class="card">
-  <table class="tbl">
+  <table class="tbl" style="table-layout: fixed; width: 100%;">
+    <colgroup>
+      <col style="width: 56px;">
+      <col style="width: 140px;">
+      <col style="width: 88px;">
+      <col>
+      <col style="width: 128px;">
+      <col style="width: 128px;">
+      <col style="width: 132px;">
+    </colgroup>
     <thead>
       <tr>
         <th>ID</th>
         <th>Collection</th>
         <th>Point ID</th>
-        <th>Text preview</th>
+        <th>Payload</th>
         <th class="col-num">Created</th>
         <th class="col-num">Updated</th>
         <th></th>
@@ -40,11 +50,67 @@
       {% for row in rows %}
       <tr>
         <td class="col-mono muted">{{ row.id }}</td>
-        <td><span class="chip chip--ink chip--mono">{{ row.collection }}</span></td>
-        <td class="col-mono muted">{{ row.point_id }}</td>
-        <td style="max-width: 0;">
-          <div class="truncate" style="color: var(--ink-900);">
-            {% if row.payload and row.payload.text %}{{ row.payload.text[:120] }}{% if row.payload.text|length > 120 %}…{% endif %}{% else %}<span class="dim">—</span>{% endif %}
+        <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          <span class="chip chip--ink chip--mono">{{ row.collection }}</span>
+        </td>
+        <td class="col-mono muted" title="{{ row.point_id }}"
+            style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          {% if row.point_id and row.point_id|length > 6 %}{{ row.point_id[:6] }}…{% else %}{{ row.point_id }}{% endif %}
+        </td>
+        <td>
+          {% set payload = row.payload or {} %}
+          {% set text_val = payload.get('text') %}
+          <div class="vdb-payload">
+            <div class="vdb-payload__preview" style="color: var(--ink-900); line-height: 1.5;">
+              {% if text_val %}
+                <span class="vdb-payload__text">{{ text_val[:140] }}{% if text_val|length > 140 %}…{% endif %}</span>
+              {% else %}
+                <span class="dim">—</span>
+              {% endif %}
+              {% set extra_keys = [] %}
+              {% for k in payload.keys() %}{% if k != 'text' %}{% set _ = extra_keys.append(k) %}{% endif %}{% endfor %}
+              {% if extra_keys or (text_val and text_val|length > 140) %}
+                <button type="button" class="vdb-payload__toggle" data-vdb-toggle
+                        style="margin-left: 6px; background: none; border: none; padding: 0; color: var(--accent, #2563eb); font-size: 12px; cursor: pointer; text-decoration: underline;">
+                  Read more
+                </button>
+              {% endif %}
+            </div>
+            {% if extra_keys or (text_val and text_val|length > 140) %}
+              <div class="vdb-payload__more" hidden style="margin-top: 8px;">
+                <table class="tbl tbl--inner" style="font-size: 12px; width: 100%; table-layout: fixed;">
+                  <colgroup>
+                    <col style="width: 130px;">
+                    <col>
+                  </colgroup>
+                  <tbody>
+                    {% if text_val %}
+                    <tr>
+                      <th style="vertical-align: top; text-align: left; padding: 4px 8px; color: var(--ink-600);" class="mono">text</th>
+                      <td style="padding: 4px 8px; white-space: pre-wrap; word-break: break-word;">{{ text_val }}</td>
+                    </tr>
+                    {% endif %}
+                    {% for k in extra_keys %}
+                      {% set v = payload[k] %}
+                      <tr>
+                        <th style="vertical-align: top; text-align: left; padding: 4px 8px; color: var(--ink-600);" class="mono">{{ k }}</th>
+                        <td style="padding: 4px 8px; white-space: pre-wrap; word-break: break-word;">
+                          {% if v is mapping %}
+                            <code class="mono" style="font-size: 11px;">{{ v | tojson }}</code>
+                          {% elif v is iterable and v is not string %}
+                            {{ v | join(' › ') }}
+                          {% elif v is string and v.startswith('http') %}
+                            <a href="{{ v }}" target="_blank" rel="noopener" class="mono" style="font-size: 11px;">{{ v }}</a>
+                          {% else %}
+                            {{ v }}
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% endif %}
           </div>
         </td>
         <td class="col-num col-mono muted">{{ row.created_at | fmt_date }}</td>
@@ -69,4 +135,27 @@
 
 {% set base_url = "/dashboard/vectordb" %}
 {% include "partials/pagination.html" %}
+{% endblock %}
+
+{% block body_extra %}
+<script>
+(function () {
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-vdb-toggle]');
+    if (!btn) return;
+    const wrap = btn.closest('.vdb-payload');
+    if (!wrap) return;
+    const more = wrap.querySelector('.vdb-payload__more');
+    if (!more) return;
+    const open = !more.hasAttribute('hidden');
+    if (open) {
+      more.setAttribute('hidden', '');
+      btn.textContent = 'Read more';
+    } else {
+      more.removeAttribute('hidden');
+      btn.textContent = 'Show less';
+    }
+  });
+})();
+</script>
 {% endblock %}

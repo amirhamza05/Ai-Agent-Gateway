@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% from "partials/icons.html" import icon %}
+{% block title %}Import JSONL — GeoSWMM Admin{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div>
+    <h1>Import JSONL</h1>
+    <p class="subtitle">Upload a JSONL file of payloads. Each line's <code class="mono">text</code> field is embedded with <code class="mono">openai/text-embedding-3-small</code> in a single bulk request.</p>
+  </div>
+  <div class="page-header__actions">
+    <a class="btn btn--ghost" href="/dashboard/vectordb">← Vector DB</a>
+  </div>
+</header>
+
+<article class="card card--pad" style="max-width: 720px;">
+  <form method="post" action="/dashboard/vectordb/import/preview"
+        enctype="multipart/form-data" class="col" style="gap: 18px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label class="field">
+      <span class="field__label">Collection <span class="field__required">*</span></span>
+      <input class="field__input mono" type="text" name="collection"
+             value="{{ form_values.collection or '' }}" required
+             pattern="^[A-Za-z0-9_\-]{1,64}$"
+             title="1–64 characters: letters, digits, underscore, hyphen"
+             placeholder="e.g. geoswmm_docs">
+      <span class="field__hint">All rows are imported into this collection. Letters, digits, underscore and hyphen only.</span>
+    </label>
+
+    <label class="field">
+      <span class="field__label">JSONL file <span class="field__required">*</span></span>
+      <input class="field__input" type="file" name="file" required
+             accept=".jsonl,.json,.ndjson,application/json,application/x-ndjson,text/plain">
+      <span class="field__hint">
+        One JSON object per line. Each must contain a non-empty <code class="mono">text</code> field;
+        the full object is stored as the row's <code class="mono">payload</code>.
+        Max {{ max_rows }} rows, {{ (max_bytes // 1024 // 1024) }} MB.
+      </span>
+    </label>
+
+    <div style="display: flex; gap: 10px; padding-top: 8px;">
+      <button type="submit" class="btn btn--primary">{{ icon('eye') }} Preview</button>
+      <a class="btn btn--ghost" href="/dashboard/vectordb">Cancel</a>
+    </div>
+  </form>
+</article>
+{% endblock %}

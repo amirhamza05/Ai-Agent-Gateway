@@ -6,9 +6,9 @@
   <div>
     <h1>{% if row %}Edit embedding{% else %}New embedding{% endif %}</h1>
     {% if row %}
-      <p class="subtitle mono" style="font-family: var(--font-mono);">#{{ row.id }} · {{ row.collection }}</p>
+      <p class="subtitle mono" style="font-family: var(--font-mono);">#{{ row.id }} · {{ row.collection }} · <span class="muted">point_id={{ row.point_id }}</span></p>
     {% else %}
-      <p class="subtitle">Add text — the gateway embeds it on save with <code class="mono">openai/text-embedding-3-small</code>.</p>
+      <p class="subtitle">Add a payload JSON object — the gateway embeds the <code class="mono">text</code> field on save with <code class="mono">openai/text-embedding-3-small</code>.</p>
     {% endif %}
   </div>
   <div class="page-header__actions">
@@ -31,21 +31,15 @@
     </label>
 
     <label class="field">
-      <span class="field__label">Point ID <span class="muted" style="text-transform: none; letter-spacing: 0;">(optional — auto-generated UUID4 if blank)</span></span>
-      <input class="field__input mono" type="text" name="point_id"
-             value="{{ form_values.point_id or '' }}"
-             placeholder="leave blank to auto-generate">
-      <span class="field__hint">Upsert key is (collection, point_id). Changing either creates a new row.</span>
-    </label>
-
-    <label class="field">
-      <span class="field__label">Text <span class="field__required">*</span></span>
-      <textarea class="field__textarea" name="text" rows="8" required
-                placeholder="The document text to embed…"
-                style="resize: vertical; line-height: 1.55;">{{ form_values.text or '' }}</textarea>
+      <span class="field__label">Payload (JSON) <span class="field__required">*</span></span>
+      <textarea class="field__textarea mono" name="payload_json" rows="14" required
+                placeholder='{"text": "..."}'
+                style="resize: vertical; line-height: 1.5; font-size: 12px;">{{ form_values.payload_json or '' }}</textarea>
       <span class="field__hint">
-        Embedded with <code class="mono">openai/text-embedding-3-small</code> (1536-dim) and stored in <code class="mono">payload.text</code>.
-        {% if row %}The embedding is always re-generated on edit.{% endif %}
+        Must be a JSON object with a non-empty <code class="mono">text</code> field.
+        The full object is stored as <code class="mono">payload</code>; the embedding is
+        always re-generated from <code class="mono">text</code>.
+        {% if not row %}<br>Point ID is auto-generated (UUID4) — no need to enter one.{% endif %}
       </span>
     </label>
 

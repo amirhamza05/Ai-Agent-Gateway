@@ -35,7 +35,7 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from itsdangerous import BadSignature, URLSafeSerializer
 from sqlalchemy import func, select, text, update
@@ -48,8 +48,11 @@ from gateway.auth.jwt import (
     refresh_token_expiry,
 )
 from gateway.auth.passwords import hash_password, verify_password
-from gateway.billing import PricingCache
+from gateway.billing import PricingCache, compute_embedding_cost_usd
 from gateway.config import get_settings
+from gateway.logging_mw import insert_request_log
+from gateway.truncate import truncate as _truncate_text
+import time as _time
 from gateway.dashboard import auth as dash_auth
 from gateway.dashboard import csrf as dash_csrf
 from gateway.dashboard.reports import (
@@ -2012,8 +2015,20 @@ def _get_embed_status(request: Request) -> EmbedProviderStatus:
     return status_obj
 
 
-async def _embed_text(text: str, request: Request, session: Any) -> list[float]:
-    """Embed ``text`` via OpenRouter and return the vector.
+async def _embed_and_log_batch(
+    request: Request,
+    session: Any,
+    *,
+    inputs: list[str],
+    source: str,
+) -> list[list[float]]:
+    """Embed ``inputs`` via OpenRouter, write one ``request_log`` row, return vectors.
+
+    A single ``request_log`` row is appended and committed before this
+    function returns (or raises), regardless of success or failure. The
+    row carries ``user_id = current admin``, ``chat_id = NULL`` and a
+    ``meta.source`` tag identifying the dashboard caller. Cost is computed
+    from ``usage.prompt_tokens`` via :func:`compute_embedding_cost_usd`.
 
     Raises :exc:`RuntimeError` with a user-safe message on any failure.
     """
@@ -2024,34 +2039,158 @@ async def _embed_text(text: str, request: Request, session: Any) -> list[float]:
     settings = get_settings()
     cred_store: CredentialStore = request.app.state.credential_store
     client = request.app.state.openrouter_client
+    pricing_cache: PricingCache = request.app.state.pricing_cache
+    admin_user: User = request.state.dashboard_user
+
+    request_id = _uuid.uuid4()
+    started = _time.monotonic()
+    upstream_body: dict[str, Any] = {"model": EMBED_MODEL, "input": inputs}
+
+    state: dict[str, Any] = {
+        "status_code": 0,
+        "error_code": None,
+        "tokens_in": 0,
+        "cost_usd": None,
+        "response_text": "",
+        "response_bytes": 0,
+    }
+    vectors: list[list[float]] = []
 
     try:
-        api_key = await cred_store.resolve(SETTING_OPENROUTER_KEY, session)
-    except CredentialMissing:
-        raise RuntimeError("Embedding provider not configured — OpenRouter API key missing.")
+        try:
+            api_key = await cred_store.resolve(SETTING_OPENROUTER_KEY, session)
+        except CredentialMissing:
+            state["error_code"] = "credential_missing"
+            state["status_code"] = 503
+            raise RuntimeError(
+                "Embedding provider not configured — OpenRouter API key missing."
+            )
 
-    try:
-        resp, parsed = await call_embeddings(
-            client,
-            api_key=api_key,
-            base_url=settings.openrouter_base_url,
-            model=EMBED_MODEL,
-            inputs=[text],
+        try:
+            resp, parsed = await call_embeddings(
+                client,
+                api_key=api_key,
+                base_url=settings.openrouter_base_url,
+                model=EMBED_MODEL,
+                inputs=inputs,
+            )
+        except _httpx.HTTPError as exc:
+            state["error_code"] = type(exc).__name__
+            state["status_code"] = 502
+            raise RuntimeError(
+                f"Embedding provider unreachable: {type(exc).__name__}"
+            ) from exc
+
+        state["status_code"] = resp.status_code
+        state["response_bytes"] = len(resp.content)
+        state["response_text"] = (
+            resp.text if isinstance(resp.text, str)
+            else resp.content.decode("utf-8", "replace")
         )
-    except _httpx.HTTPError as exc:
-        raise RuntimeError(f"Embedding provider unreachable: {type(exc).__name__}") from exc
 
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Embedding provider returned HTTP {resp.status_code}.")
+        if resp.status_code >= 400:
+            state["error_code"] = f"upstream_{resp.status_code}"
+            raise RuntimeError(
+                f"Embedding provider returned HTTP {resp.status_code}."
+            )
 
-    if parsed is None or "data" not in parsed or not parsed["data"]:
-        raise RuntimeError("Embedding provider returned an unexpected response shape.")
+        if parsed is None or "data" not in parsed or not isinstance(parsed["data"], list):
+            state["error_code"] = "bad_response_shape"
+            raise RuntimeError(
+                "Embedding provider returned an unexpected response shape."
+            )
 
-    vector = parsed["data"][0].get("embedding")
-    if not isinstance(vector, list) or len(vector) != 1536:
-        raise RuntimeError("Embedding provider returned a vector with unexpected dimension.")
+        usage = parsed.get("usage") or {}
+        try:
+            state["tokens_in"] = int(usage.get("prompt_tokens") or 0)
+        except (TypeError, ValueError):
+            state["tokens_in"] = 0
 
-    return vector
+        try:
+            prices = await pricing_cache.get_all(session)
+            state["cost_usd"] = compute_embedding_cost_usd(
+                EMBED_MODEL, state["tokens_in"], prices=prices
+            )
+        except Exception:  # noqa: BLE001 — never fail an embed because pricing read failed
+            state["cost_usd"] = None
+
+        # OpenAI/OpenRouter return entries with an ``index`` field; sort
+        # defensively rather than trusting positional order.
+        data_sorted = sorted(parsed["data"], key=lambda d: d.get("index", 0))
+        if len(data_sorted) != len(inputs):
+            state["error_code"] = "bad_response_count"
+            raise RuntimeError(
+                f"Embedding provider returned {len(data_sorted)} vectors for "
+                f"{len(inputs)} input(s)."
+            )
+        for item in data_sorted:
+            vec = item.get("embedding")
+            if not isinstance(vec, list) or len(vec) != 1536:
+                state["error_code"] = "bad_vector_dim"
+                raise RuntimeError(
+                    "Embedding provider returned a vector with unexpected dimension."
+                )
+            vectors.append(vec)
+
+        return vectors
+    finally:
+        latency_ms = int((_time.monotonic() - started) * 1000)
+        max_bytes = settings.max_body_bytes
+
+        _, request_bytes = _truncate_text(json.dumps(upstream_body), max_bytes)
+        response_text = state["response_text"] or ""
+        response_body_text, _ = _truncate_text(response_text, max_bytes)
+        response_bytes_val = state["response_bytes"] or len(
+            response_text.encode("utf-8")
+        )
+
+        try:
+            await insert_request_log(
+                session,
+                request_id=request_id,
+                user_id=admin_user.id,
+                endpoint="embeddings",
+                model=EMBED_MODEL,
+                tokens_in=state["tokens_in"],
+                tokens_out=0,
+                cost_usd=state["cost_usd"],
+                status_code=state["status_code"] or None,
+                error_code=state["error_code"],
+                latency_ms=latency_ms,
+                client_version=None,
+                client_ip=request.client.host if request.client else None,
+                request_body=upstream_body,
+                response_body=response_body_text,
+                request_bytes=request_bytes,
+                response_bytes=response_bytes_val,
+                meta={"source": source, "input_count": len(inputs)},
+                chat_id=None,
+            )
+            await session.commit()
+        except Exception:  # noqa: BLE001 — never let a log failure mask the embed result
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            logger.exception("dashboard.embeddings.request_log_insert_failed")
+
+
+async def _embed_text(
+    text: str,
+    request: Request,
+    session: Any,
+    *,
+    source: str = "dashboard:embed",
+) -> list[float]:
+    """Embed a single string and return the 1536-dim vector.
+
+    Thin wrapper around :func:`_embed_and_log_batch` for callers that
+    only need one vector. Always writes one ``request_log`` row.
+    """
+    vectors = await _embed_and_log_batch(
+        request, session, inputs=[text], source=source
+    )
+    return vectors[0]
 
 
 @router.get("/vectordb")
@@ -2105,7 +2244,7 @@ async def vectordb_new_form(
         "csrf_token": csrf_token,
         "action": "/dashboard/vectordb",
         "row": None,
-        "form_values": {},
+        "form_values": {"payload_json": '{\n  "text": ""\n}'},
     })
     return request.app.state.templates.TemplateResponse(request, "vectordb/form.html", ctx)
 
@@ -2214,7 +2353,9 @@ async def vectordb_search_post(
             )
 
         try:
-            vector = await _embed_text(query_text, request, session)
+            vector = await _embed_text(
+                query_text, request, session, source="dashboard:vectordb:search"
+            )
         except RuntimeError as exc:
             embed_status.invalidate()
             ctx.update({"flash": {"msg": str(exc), "kind": "error"}})
@@ -2261,36 +2402,42 @@ async def vectordb_create(
         return _csrf_invalid()
 
     collection = str(form.get("collection", "")).strip()
-    point_id = str(form.get("point_id", "")).strip() or str(_uuid.uuid4())
-    text_val = str(form.get("text", "")).strip()
+    payload_raw = str(form.get("payload_json", "")).strip()
+    point_id = str(_uuid.uuid4())  # always auto-generate for new rows
 
-    form_values = {"collection": collection, "point_id": point_id, "text": text_val}
+    form_values = {"collection": collection, "payload_json": payload_raw}
+
+    def _form_error(msg: str, status: int = 400) -> Response:
+        ctx = _base_context(request, secret=secret)
+        ctx.update({
+            "csrf_token": _csrf_token(request, secret=secret),
+            "action": "/dashboard/vectordb",
+            "row": None,
+            "form_values": form_values,
+            "flash": {"msg": msg, "kind": "error"},
+        })
+        return request.app.state.templates.TemplateResponse(
+            request, "vectordb/form.html", ctx, status_code=status
+        )
 
     if not collection or not _COLLECTION_RE.match(collection):
-        ctx = _base_context(request, secret=secret)
-        ctx.update({
-            "csrf_token": _csrf_token(request, secret=secret),
-            "action": "/dashboard/vectordb",
-            "row": None,
-            "form_values": form_values,
-            "flash": {"msg": "Collection name is required and must match ^[A-Za-z0-9_-]{1,64}$.", "kind": "error"},
-        })
-        return request.app.state.templates.TemplateResponse(
-            request, "vectordb/form.html", ctx, status_code=400
+        return _form_error(
+            "Collection name is required and must match ^[A-Za-z0-9_-]{1,64}$."
         )
 
-    if not text_val:
-        ctx = _base_context(request, secret=secret)
-        ctx.update({
-            "csrf_token": _csrf_token(request, secret=secret),
-            "action": "/dashboard/vectordb",
-            "row": None,
-            "form_values": form_values,
-            "flash": {"msg": "Text is required.", "kind": "error"},
-        })
-        return request.app.state.templates.TemplateResponse(
-            request, "vectordb/form.html", ctx, status_code=400
-        )
+    if not payload_raw:
+        return _form_error("Payload JSON is required.")
+
+    try:
+        payload_obj = json.loads(payload_raw)
+    except json.JSONDecodeError as exc:
+        return _form_error(f"Payload is not valid JSON: {exc.msg} (line {exc.lineno}).")
+    if not isinstance(payload_obj, dict):
+        return _form_error("Payload must be a JSON object.")
+
+    text_val = payload_obj.get("text")
+    if not isinstance(text_val, str) or not text_val.strip():
+        return _form_error("Payload must contain a non-empty 'text' field.")
 
     embed_status = _get_embed_status(request)
 
@@ -2304,41 +2451,25 @@ async def vectordb_create(
         )
 
         if not provider_ok:
-            ctx = _base_context(request, secret=secret)
-            ctx.update({
-                "csrf_token": _csrf_token(request, secret=secret),
-                "action": "/dashboard/vectordb",
-                "row": None,
-                "form_values": form_values,
-                "flash": {
-                    "msg": f"Embeddings provider unavailable — cannot create until OpenRouter responds with a valid response for {EMBED_MODEL}. Reason: {provider_reason}",
-                    "kind": "error",
-                },
-            })
-            return request.app.state.templates.TemplateResponse(
-                request, "vectordb/form.html", ctx, status_code=503
+            return _form_error(
+                f"Embeddings provider unavailable — cannot create until OpenRouter "
+                f"responds with a valid response for {EMBED_MODEL}. "
+                f"Reason: {provider_reason}",
+                status=503,
             )
 
         try:
-            vector = await _embed_text(text_val, request, session)
+            vector = await _embed_text(
+                text_val, request, session, source="dashboard:vectordb:create"
+            )
         except RuntimeError as exc:
             embed_status.invalidate()
-            ctx = _base_context(request, secret=secret)
-            ctx.update({
-                "csrf_token": _csrf_token(request, secret=secret),
-                "action": "/dashboard/vectordb",
-                "row": None,
-                "form_values": form_values,
-                "flash": {"msg": str(exc), "kind": "error"},
-            })
-            return request.app.state.templates.TemplateResponse(
-                request, "vectordb/form.html", ctx, status_code=503
-            )
+            return _form_error(str(exc), status=503)
 
         await _pgvec_upsert(
             session,
             collection=collection,
-            points=[{"id": point_id, "vector": vector, "payload": {"text": text_val}}],
+            points=[{"id": point_id, "vector": vector, "payload": payload_obj}],
         )
 
     logger.info(
@@ -2377,14 +2508,14 @@ async def vectordb_edit_form(
 
     csrf_token = _csrf_token(request, secret=secret)
     ctx = _base_context(request, secret=secret)
+    payload_pretty = json.dumps(row.payload or {}, ensure_ascii=False, indent=2)
     ctx.update({
         "csrf_token": csrf_token,
         "action": f"/dashboard/vectordb/{embed_id}",
         "row": row,
         "form_values": {
             "collection": row.collection,
-            "point_id": row.point_id,
-            "text": row.payload.get("text", "") if row.payload else "",
+            "payload_json": payload_pretty,
         },
     })
     return request.app.state.templates.TemplateResponse(request, "vectordb/form.html", ctx)
@@ -2405,36 +2536,39 @@ async def vectordb_update(
         return _csrf_invalid()
 
     collection = str(form.get("collection", "")).strip()
-    point_id = str(form.get("point_id", "")).strip()
-    text_val = str(form.get("text", "")).strip()
+    payload_raw = str(form.get("payload_json", "")).strip()
 
-    form_values = {"collection": collection, "point_id": point_id, "text": text_val}
+    form_values = {"collection": collection, "payload_json": payload_raw}
+
+    def _form_error(msg: str, status: int = 400, row_obj=None) -> Response:
+        ctx = _base_context(request, secret=secret)
+        ctx.update({
+            "csrf_token": _csrf_token(request, secret=secret),
+            "action": f"/dashboard/vectordb/{embed_id}",
+            "row": row_obj,
+            "form_values": form_values,
+            "flash": {"msg": msg, "kind": "error"},
+        })
+        return request.app.state.templates.TemplateResponse(
+            request, "vectordb/form.html", ctx, status_code=status
+        )
 
     if not collection or not _COLLECTION_RE.match(collection):
-        ctx = _base_context(request, secret=secret)
-        ctx.update({
-            "csrf_token": _csrf_token(request, secret=secret),
-            "action": f"/dashboard/vectordb/{embed_id}",
-            "row": None,
-            "form_values": form_values,
-            "flash": {"msg": "Collection name must match ^[A-Za-z0-9_-]{1,64}$.", "kind": "error"},
-        })
-        return request.app.state.templates.TemplateResponse(
-            request, "vectordb/form.html", ctx, status_code=400
-        )
+        return _form_error("Collection name must match ^[A-Za-z0-9_-]{1,64}$.")
 
-    if not text_val:
-        ctx = _base_context(request, secret=secret)
-        ctx.update({
-            "csrf_token": _csrf_token(request, secret=secret),
-            "action": f"/dashboard/vectordb/{embed_id}",
-            "row": None,
-            "form_values": form_values,
-            "flash": {"msg": "Text is required.", "kind": "error"},
-        })
-        return request.app.state.templates.TemplateResponse(
-            request, "vectordb/form.html", ctx, status_code=400
-        )
+    if not payload_raw:
+        return _form_error("Payload JSON is required.")
+
+    try:
+        payload_obj = json.loads(payload_raw)
+    except json.JSONDecodeError as exc:
+        return _form_error(f"Payload is not valid JSON: {exc.msg} (line {exc.lineno}).")
+    if not isinstance(payload_obj, dict):
+        return _form_error("Payload must be a JSON object.")
+
+    text_val = payload_obj.get("text")
+    if not isinstance(text_val, str) or not text_val.strip():
+        return _form_error("Payload must contain a non-empty 'text' field.")
 
     embed_status = _get_embed_status(request)
 
@@ -2448,8 +2582,8 @@ async def vectordb_update(
                 secret=secret,
             )
 
-        if not point_id:
-            point_id = row.point_id
+        # Preserve the existing point_id — it is not editable from the form.
+        point_id = row.point_id
 
         provider_ok, provider_reason = await embed_status.check(
             client=request.app.state.openrouter_client,
@@ -2460,46 +2594,32 @@ async def vectordb_update(
         )
 
         if not provider_ok:
-            ctx = _base_context(request, secret=secret)
-            ctx.update({
-                "csrf_token": _csrf_token(request, secret=secret),
-                "action": f"/dashboard/vectordb/{embed_id}",
-                "row": row,
-                "form_values": form_values,
-                "flash": {
-                    "msg": f"Embeddings provider unavailable — cannot edit until OpenRouter responds with a valid response for {EMBED_MODEL}. Reason: {provider_reason}",
-                    "kind": "error",
-                },
-            })
-            return request.app.state.templates.TemplateResponse(
-                request, "vectordb/form.html", ctx, status_code=503
+            return _form_error(
+                f"Embeddings provider unavailable — cannot edit until OpenRouter "
+                f"responds with a valid response for {EMBED_MODEL}. "
+                f"Reason: {provider_reason}",
+                status=503,
+                row_obj=row,
             )
 
         try:
-            vector = await _embed_text(text_val, request, session)
+            vector = await _embed_text(
+                text_val, request, session, source="dashboard:vectordb:update"
+            )
         except RuntimeError as exc:
             embed_status.invalidate()
-            ctx = _base_context(request, secret=secret)
-            ctx.update({
-                "csrf_token": _csrf_token(request, secret=secret),
-                "action": f"/dashboard/vectordb/{embed_id}",
-                "row": row,
-                "form_values": form_values,
-                "flash": {"msg": str(exc), "kind": "error"},
-            })
-            return request.app.state.templates.TemplateResponse(
-                request, "vectordb/form.html", ctx, status_code=503
-            )
+            return _form_error(str(exc), status=503, row_obj=row)
 
         await _pgvec_upsert(
             session,
             collection=collection,
-            points=[{"id": point_id, "vector": vector, "payload": {"text": text_val}}],
+            points=[{"id": point_id, "vector": vector, "payload": payload_obj}],
         )
 
-        # If the primary key row is different from the upsert key (i.e. user
-        # changed collection or point_id), remove the old row.
-        if row.collection != collection or row.point_id != point_id:
+        # If the collection changed, the upsert wrote a NEW row under
+        # (collection, point_id) — remove the old one so we don't leak
+        # duplicates across collections.
+        if row.collection != collection:
             await session.delete(row)
             await session.commit()
 
@@ -2553,6 +2673,276 @@ async def vectordb_delete(
     return _redirect(
         "/dashboard/vectordb",
         flash_msg=f"Embedding {embed_id} deleted.",
+        flash_kind="success",
+        secret=secret,
+    )
+
+
+# ---------------------------------------------------------------------------
+# JSONL bulk import
+# ---------------------------------------------------------------------------
+
+_IMPORT_MAX_ROWS = 400
+_IMPORT_MAX_BYTES = 5 * 1024 * 1024  # 5 MB upload cap
+_IMPORT_EMBED_BATCH = 32  # rows per OpenRouter embeddings call
+
+
+def _parse_jsonl_rows(raw: bytes) -> tuple[list[dict[str, Any]], str | None]:
+    """Decode ``raw`` as UTF-8 JSONL, returning ``(rows, error_msg)``.
+
+    Each line must parse to a JSON object containing a non-empty ``text``
+    field. Returns ``([], msg)`` on the first failing line so the caller
+    can surface a precise error to the admin.
+    """
+    try:
+        text_data = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return [], "File is not valid UTF-8."
+
+    rows: list[dict[str, Any]] = []
+    for lineno, line in enumerate(text_data.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            return [], f"Line {lineno}: invalid JSON ({exc.msg})."
+        if not isinstance(obj, dict):
+            return [], f"Line {lineno}: expected a JSON object, got {type(obj).__name__}."
+        text_val = obj.get("text")
+        if not isinstance(text_val, str) or not text_val.strip():
+            return [], f"Line {lineno}: missing or empty 'text' field."
+        rows.append(obj)
+    return rows, None
+
+
+@router.get("/vectordb/import")
+async def vectordb_import_form(
+    request: Request,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Render the JSONL import form."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "csrf_token": _csrf_token(request, secret=secret),
+        "form_values": {},
+        "max_rows": _IMPORT_MAX_ROWS,
+        "max_bytes": _IMPORT_MAX_BYTES,
+    })
+    return request.app.state.templates.TemplateResponse(
+        request, "vectordb/import.html", ctx
+    )
+
+
+@router.post("/vectordb/import/preview")
+async def vectordb_import_preview(
+    request: Request,
+    collection: str = Form(""),
+    csrf_token: str = Form(""),
+    file: UploadFile = File(...),
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Validate the upload and render a per-row preview before commit."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    if not _check_csrf({"csrf_token": csrf_token}, request=request, secret=secret):
+        return _csrf_invalid()
+
+    collection = collection.strip()
+    ctx = _base_context(request, secret=secret)
+    ctx.update({
+        "csrf_token": _csrf_token(request, secret=secret),
+        "form_values": {"collection": collection},
+        "max_rows": _IMPORT_MAX_ROWS,
+        "max_bytes": _IMPORT_MAX_BYTES,
+    })
+
+    def _import_error(msg: str, status: int = 400) -> Response:
+        ctx["flash"] = {"msg": msg, "kind": "error"}
+        return request.app.state.templates.TemplateResponse(
+            request, "vectordb/import.html", ctx, status_code=status
+        )
+
+    if not collection or not _COLLECTION_RE.match(collection):
+        return _import_error(
+            "Collection name is required and must match ^[A-Za-z0-9_-]{1,64}$."
+        )
+
+    raw = await file.read()
+    if not raw:
+        return _import_error("Uploaded file is empty.")
+    if len(raw) > _IMPORT_MAX_BYTES:
+        return _import_error(
+            f"File too large: {len(raw)} bytes (max {_IMPORT_MAX_BYTES})."
+        )
+
+    rows, err = _parse_jsonl_rows(raw)
+    if err is not None:
+        return _import_error(err)
+    if not rows:
+        return _import_error("No rows found in JSONL file.")
+    if len(rows) > _IMPORT_MAX_ROWS:
+        return _import_error(
+            f"Too many rows: {len(rows)} (max {_IMPORT_MAX_ROWS}). "
+            f"Split the file and try again."
+        )
+
+    # Stash the parsed rows back into the form as a hidden JSON blob so the
+    # commit endpoint is fully stateless — no server-side temp storage.
+    payload_blob = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+
+    preview_ctx = _base_context(request, secret=secret)
+    preview_ctx.update({
+        "csrf_token": _csrf_token(request, secret=secret),
+        "collection": collection,
+        "rows": rows,
+        "row_count": len(rows),
+        "payload_blob": payload_blob,
+        "filename": file.filename or "upload.jsonl",
+    })
+    return request.app.state.templates.TemplateResponse(
+        request, "vectordb/import_preview.html", preview_ctx
+    )
+
+
+@router.post("/vectordb/import")
+async def vectordb_import_commit(
+    request: Request,
+    admin=Depends(dash_auth.require_admin),
+) -> Response:
+    """Embed the previewed rows in batches and bulk-upsert into pgvector."""
+    settings = get_settings()
+    secret = settings.jwt_secret.get_secret_value()
+
+    form = dict(await request.form())
+    if not _check_csrf(form, request=request, secret=secret):
+        return _csrf_invalid()
+
+    collection = str(form.get("collection", "")).strip()
+    blob = str(form.get("payload_blob", ""))
+
+    if not collection or not _COLLECTION_RE.match(collection):
+        return _redirect(
+            "/dashboard/vectordb/import",
+            flash_msg="Collection name is required and must match ^[A-Za-z0-9_-]{1,64}$.",
+            flash_kind="error",
+            secret=secret,
+        )
+
+    try:
+        rows = json.loads(blob)
+    except json.JSONDecodeError:
+        return _redirect(
+            "/dashboard/vectordb/import",
+            flash_msg="Preview payload was malformed — please re-upload the file.",
+            flash_kind="error",
+            secret=secret,
+        )
+
+    if not isinstance(rows, list) or not rows:
+        return _redirect(
+            "/dashboard/vectordb/import",
+            flash_msg="Preview payload was empty — please re-upload the file.",
+            flash_kind="error",
+            secret=secret,
+        )
+    if len(rows) > _IMPORT_MAX_ROWS:
+        return _redirect(
+            "/dashboard/vectordb/import",
+            flash_msg=f"Row count exceeds the {_IMPORT_MAX_ROWS}-row limit.",
+            flash_kind="error",
+            secret=secret,
+        )
+
+    # Validate row shape and extract texts in stable order.
+    texts: list[str] = []
+    for i, obj in enumerate(rows, start=1):
+        if not isinstance(obj, dict):
+            return _redirect(
+                "/dashboard/vectordb/import",
+                flash_msg=f"Row {i} is not a JSON object.",
+                flash_kind="error",
+                secret=secret,
+            )
+        text_val = obj.get("text")
+        if not isinstance(text_val, str) or not text_val.strip():
+            return _redirect(
+                "/dashboard/vectordb/import",
+                flash_msg=f"Row {i} has a missing or empty 'text' field.",
+                flash_kind="error",
+                secret=secret,
+            )
+        texts.append(text_val)
+
+    embed_status = _get_embed_status(request)
+
+    async with request.app.state.db_session_factory() as session:
+        provider_ok, provider_reason = await embed_status.check(
+            client=request.app.state.openrouter_client,
+            cred_store=request.app.state.credential_store,
+            pricing_cache=request.app.state.pricing_cache,
+            session=session,
+            base_url=settings.openrouter_base_url,
+        )
+        if not provider_ok:
+            return _redirect(
+                "/dashboard/vectordb/import",
+                flash_msg=(
+                    f"Embeddings provider unavailable — cannot import. "
+                    f"Reason: {provider_reason}"
+                ),
+                flash_kind="error",
+                secret=secret,
+            )
+
+        # Bulk embed in batches via the shared helper so each upstream call
+        # produces one request_log row (endpoint=embeddings, chat_id=NULL)
+        # with cost computed from usage.prompt_tokens.
+        vectors: list[list[float]] = []
+        for batch_start in range(0, len(texts), _IMPORT_EMBED_BATCH):
+            batch = texts[batch_start : batch_start + _IMPORT_EMBED_BATCH]
+            try:
+                batch_vectors = await _embed_and_log_batch(
+                    request,
+                    session,
+                    inputs=batch,
+                    source="dashboard:vectordb:import",
+                )
+            except RuntimeError as exc:
+                embed_status.invalidate()
+                return _redirect(
+                    "/dashboard/vectordb/import",
+                    flash_msg=(
+                        f"Embedding failed on batch starting at row "
+                        f"{batch_start + 1}: {exc}"
+                    ),
+                    flash_kind="error",
+                    secret=secret,
+                )
+            vectors.extend(batch_vectors)
+
+        # Build points and upsert in a single statement. The payload is the
+        # original row verbatim so all JSONL fields are queryable.
+        points: list[dict[str, Any]] = []
+        for row, vec in zip(rows, vectors):
+            point_id = str(row.get("id") or _uuid.uuid4())
+            points.append({"id": point_id, "vector": vec, "payload": row})
+
+        await _pgvec_upsert(session, collection=collection, points=points)
+
+    logger.info(
+        "dashboard.vectordb.imported",
+        admin_user_id=str(request.state.dashboard_user.id),
+        collection=collection,
+        row_count=len(points),
+    )
+    return _redirect(
+        "/dashboard/vectordb",
+        flash_msg=f"Imported {len(points)} embeddings into collection \"{collection}\".",
         flash_kind="success",
         secret=secret,
     )
